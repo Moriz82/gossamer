@@ -118,81 +118,95 @@ export default function OperationsPanel() {
           <option key={n} value={n} />
         ))}
       </datalist>
-      <h2>Ingest</h2>
-      <p className="muted">
-        Upload tool output or reference a <strong>server-visible path</strong>. Ingestor names match the{" "}
-        <strong>Ingestors</strong> tab; use a hint when auto-detection is wrong.
-      </p>
+      <div className="card">
+        <h2>Ingest</h2>
+        <p className="muted">
+          Upload tool output or reference a <strong>server-visible path</strong>. Ingestor names match the{" "}
+          <strong>Ingestors</strong> tab; use a hint when auto-detection is wrong.
+        </p>
 
-      <form className="form-grid" onSubmit={onUpload}>
-        <label>
-          File upload
-          <input name="file" type="file" />
-        </label>
-        <label>
-          Source label
-          <input value={sourceLabel} onChange={(e) => setSourceLabel(e.target.value)} />
-        </label>
-        <label>
-          Ingestor hint (optional)
-          <input
-            value={hint}
-            onChange={(e) => setHint(e.target.value)}
-            placeholder="select or type"
-            list="ingestor-hints"
-          />
-        </label>
-        <button type="submit" disabled={busy}>
-          Upload & ingest
-        </button>
-      </form>
-
-      <h3>Path on server</h3>
-      <div className="form-grid">
-        <label className="full">
-          Absolute path
-          <input value={path} onChange={(e) => setPath(e.target.value)} placeholder="/path/to/out.jsonl" />
-        </label>
-        <button type="button" onClick={() => void ingestByPath()} disabled={busy || !path}>
-          Ingest path
-        </button>
+        <form className="form-grid" onSubmit={onUpload}>
+          <label>
+            File upload
+            <input name="file" type="file" />
+          </label>
+          <label>
+            Source label
+            <input value={sourceLabel} onChange={(e) => setSourceLabel(e.target.value)} />
+          </label>
+          <label>
+            Ingestor hint (optional)
+            <input
+              value={hint}
+              onChange={(e) => setHint(e.target.value)}
+              placeholder="select or type"
+              list="ingestor-hints"
+            />
+          </label>
+          <div className="form-actions">
+            <button type="submit" disabled={busy}>
+              Upload & ingest
+            </button>
+          </div>
+        </form>
       </div>
 
-      <h2>Crawl (.urlseed)</h2>
-      <div className="form-grid">
-        <label className="full">
-          Seeds file path (server)
-          <input
-            value={crawlSeeds}
-            onChange={(e) => setCrawlSeeds(e.target.value)}
-            placeholder="/path/to/seeds.urlseed"
-          />
-        </label>
-        <label>
-          Source label
-          <input value={crawlSource} onChange={(e) => setCrawlSource(e.target.value)} />
-        </label>
-        <label>
-          Max depth (optional)
-          <input value={maxDepth} onChange={(e) => setMaxDepth(e.target.value)} placeholder="3" />
-        </label>
-        <label>
-          Max pages (optional)
-          <input value={maxPages} onChange={(e) => setMaxPages(e.target.value)} placeholder="100" />
-        </label>
-        <label className="full">
-          Scope hosts (one per line, optional)
-          <textarea value={scopeHosts} onChange={(e) => setScopeHosts(e.target.value)} rows={3} />
-        </label>
-        <button type="button" onClick={() => void runCrawl()} disabled={busy || !crawlSeeds}>
-          Run crawl ingest
-        </button>
+      <div className="card">
+        <h3>Path on server</h3>
+        <div className="form-grid">
+          <label className="full">
+            Absolute path
+            <input value={path} onChange={(e) => setPath(e.target.value)} placeholder="/path/to/out.jsonl" />
+          </label>
+          <div className="form-actions">
+            <button type="button" onClick={() => void ingestByPath()} disabled={busy || !path}>
+              Ingest path
+            </button>
+          </div>
+        </div>
       </div>
 
-      <h2>Danger zone</h2>
-      <button type="button" className="danger" onClick={() => void clearGraph()} disabled={busy}>
-        Clear graph
-      </button>
+      <div className="card">
+        <h2>Crawl (.urlseed)</h2>
+        <div className="form-grid">
+          <label className="full">
+            Seeds file path (server)
+            <input
+              value={crawlSeeds}
+              onChange={(e) => setCrawlSeeds(e.target.value)}
+              placeholder="/path/to/seeds.urlseed"
+            />
+          </label>
+          <label>
+            Source label
+            <input value={crawlSource} onChange={(e) => setCrawlSource(e.target.value)} />
+          </label>
+          <label>
+            Max depth (optional)
+            <input value={maxDepth} onChange={(e) => setMaxDepth(e.target.value)} placeholder="3" />
+          </label>
+          <label>
+            Max pages (optional)
+            <input value={maxPages} onChange={(e) => setMaxPages(e.target.value)} placeholder="100" />
+          </label>
+          <label className="full">
+            Scope hosts (one per line, optional)
+            <textarea value={scopeHosts} onChange={(e) => setScopeHosts(e.target.value)} rows={3} />
+          </label>
+          <div className="form-actions">
+            <button type="button" onClick={() => void runCrawl()} disabled={busy || !crawlSeeds}>
+              Run crawl ingest
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="card danger-card">
+        <h2>Danger zone</h2>
+        <button type="button" className="danger" onClick={() => void clearGraph()} disabled={busy}>
+          Clear graph
+        </button>
+      </div>
 
       {msg ? <pre className="panel-msg">{msg}</pre> : null}
     </div>
