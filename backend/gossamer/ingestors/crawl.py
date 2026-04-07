@@ -1,20 +1,18 @@
 from __future__ import annotations
 
-import re
 from pathlib import Path
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 
 import httpx
 
 from gossamer.config import Settings, get_settings
 from gossamer.ingestors.base import Ingestor
 from gossamer.ingestors.discovery import discover_from_robots, discover_from_sitemap
+from gossamer.ingestors.extractors import extract_all
 from gossamer.ingestors.fetch import fetch_url
 from gossamer.ingestors.registry import register_ingestor
 from gossamer.models import IngestContext, RawEdge, RawNode, RawObservationBatch
 from gossamer.scope import host_allowed
-
-_HREF_RE = re.compile(r'href=["\']([^"\']+)["\']', re.I)
 
 # Sentinel path: ingest expects a file; crawl uses a .url seed file (one URL per line)
 
@@ -205,17 +203,14 @@ class CrawlIngestor(Ingestor):
                 body = result.body
                 if body is None:
                     continue
-                if "text/html" not in ctype.lower() and "<a " not in body[:1000].lower():
-                    continue
-                final_url = result.url
-                for m in _HREF_RE.findall(body):
-                    dest = urljoin(final_url, m)
+                for link in extract_all(body, ctype, result.url):
+                    dest = link.url
                     dp = urlparse(dest)
                     dh = (dp.hostname or "").lower()
                     if not dh or not host_allowed(dh, scope):
                         continue
                     dest_full = dest
-                    dest_method = "GET"
+                    dest_method = link.method
                     dest_key = f"{dest_method}|{dest_full}"
                     dh_key = dh
                     batch.nodes.append(
@@ -252,7 +247,7 @@ class CrawlIngestor(Ingestor):
                             src_key=ep_key,
                             dst_kind="Endpoint",
                             dst_key=dest_key,
-                            properties={"via": "href"},
+                            properties={"via": link.via, "context": link.context},
                             source=ctx.source_label,
                         )
                     )
