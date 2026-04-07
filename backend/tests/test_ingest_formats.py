@@ -11,6 +11,27 @@ from gossamer.ingestors.registry import get_ingestor
 from gossamer.pipeline import ingest_and_store, run_ingest
 
 
+def test_nuclei_json_jsonl(tmp_path: Path) -> None:
+    sample = {
+        "template-id": "http/exposure/test",
+        "info": {"name": "Test Finding", "severity": "high", "tags": ["panel"]},
+        "matcher-name": "status",
+        "type": "http",
+        "host": "https://nucleifmt.test",
+        "matched-at": "https://nucleifmt.test/admin",
+    }
+    p = tmp_path / "nuclei.jsonl"
+    p.write_text(json.dumps(sample) + "\n", encoding="utf-8")
+    store = SqliteGraphStore(tmp_path / "n.sqlite")
+    ingest_and_store(store, p, "nuc", "nuclei_json", Settings())
+    kinds = {r["kind"] for r in store._conn.execute("SELECT kind FROM nodes")}
+    assert "Finding" in kinds
+    rows = store._conn.execute(
+        "SELECT COUNT(*) AS c FROM edges WHERE kind = 'found_on'",
+    ).fetchone()
+    assert rows["c"] >= 1
+
+
 def test_httpx_json_jsonl(tmp_path: Path) -> None:
     p = tmp_path / "a.jsonl"
     p.write_text(

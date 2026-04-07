@@ -15,6 +15,36 @@ def test_ingestors_and_normalizers_catalog(isolated_client: "TestClient") -> Non
     names = {x["name"] for x in ing}
     assert "httpx_json" in names
     assert "crawl_seed" in names
+    assert "nuclei_json" in names
+    by_name = {x["name"]: x for x in ing}
+    assert by_name["nuclei_json"].get("role") == "scanner"
+
+
+def test_findings_empty(isolated_client: "TestClient") -> None:
+    r = isolated_client.get("/api/findings")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["count"] == 0
+    assert body["findings"] == []
+
+
+def test_templates_list_and_download(isolated_client: "TestClient") -> None:
+    r = isolated_client.get("/api/templates")
+    assert r.status_code == 200
+    data = r.json()
+    assert isinstance(data, list)
+    assert len(data) >= 1
+
+    bad = isolated_client.get("/api/templates/download")
+    assert bad.status_code == 400
+
+    r_all = isolated_client.get("/api/templates/download?all=1")
+    assert r_all.status_code == 200
+    assert "zip" in (r_all.headers.get("content-type") or "").lower()
+
+    tid = data[0]["id"]
+    r_one = isolated_client.get(f"/api/templates/download?ids={tid}")
+    assert r_one.status_code == 200
     norm = isolated_client.get("/api/normalizers").json()
     assert any(n["name"] == "strip_utm" for n in norm)
 

@@ -1,0 +1,1 @@
+{"template-id":"http/misc/template-sample","info":{"name":"Sample template","severity":"medium","tags":["panel"]},"type":"http","host":"https://example.com","matched-at":"https://example.com/login","matcher-name":"status"}

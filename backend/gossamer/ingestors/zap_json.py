@@ -5,6 +5,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from gossamer.ingestors.base import Ingestor
+from gossamer.ingestors.finding_helpers import emit_finding_on_target, ensure_source
 from gossamer.ingestors.registry import register_ingestor
 from gossamer.models import IngestContext, RawEdge, RawNode, RawObservationBatch
 
@@ -57,6 +58,17 @@ def _emit_url(batch: RawObservationBatch, url: str, method: str, source_label: s
     )
 
 
+def _risk_to_severity(riskdesc: str) -> str:
+    s = (riskdesc or "").lower()
+    if "high" in s:
+        return "high"
+    if "medium" in s:
+        return "medium"
+    if "low" in s:
+        return "low"
+    return "info"
+
+
 class ZapJsonIngestor(Ingestor):
     name = "zap_json"
 
@@ -75,15 +87,7 @@ class ZapJsonIngestor(Ingestor):
 
     def ingest(self, ctx: IngestContext) -> RawObservationBatch:
         batch = RawObservationBatch()
-        source_key = f"ingestor:{self.name}:{ctx.source_label}"
-        batch.nodes.append(
-            RawNode(
-                kind="Source",
-                key=source_key,
-                properties={"name": ctx.source_label, "ingestor": self.name},
-                source=ctx.source_label,
-            )
-        )
+        source_key = ensure_source(batch, ingestor_name=self.name, source_label=ctx.source_label)
         data = json.loads(ctx.path.read_text(encoding="utf-8", errors="ignore"))
         sites = data.get("site") if isinstance(data, dict) else None
         if not isinstance(sites, list):
@@ -108,6 +112,12 @@ class ZapJsonIngestor(Ingestor):
             for alert in alerts:
                 if not isinstance(alert, dict):
                     continue
+                name = str(alert.get("name") or "")
+                pluginid = str(alert.get("pluginid") or "")
+                cwe = alert.get("cweid")
+                riskdesc = str(alert.get("riskdesc") or alert.get("risk") or "")
+                sev = _risk_to_severity(riskdesc)
+                desc = str(alert.get("desc") or "")[:1200]
                 instances = alert.get("instances") or []
                 for inst in instances:
                     if not isinstance(inst, dict):
@@ -115,8 +125,27 @@ class ZapJsonIngestor(Ingestor):
                     uri = inst.get("uri") or inst.get("url")
                     if not uri:
                         continue
-                    method = inst.get("method") or "GET"
-                    _emit_url(batch, str(uri), str(method), ctx.source_label, source_key)
+                    method = str(inst.get("method") or "GET")
+                    emit_finding_on_target(
+                        batch,
+                        scanner="zap",
+                        dedup_parts=(pluginid, name, str(uri), method),
+                        target_uri=str(uri),
+                        method=method,
+                        source_label=ctx.source_label,
+                        source_key=source_key,
+                        finding_props={
+                            "scanner": "zap",
+                            "name": name or "ZAP alert",
+                            "severity": sev,
+                            "template_id": pluginid or None,
+                            "plugin_id": pluginid or None,
+                            "cwe_id": str(cwe) if cwe is not None else None,
+                            "description": desc or None,
+                            "risk": riskdesc or None,
+                        },
+                        edge_props={"plugin_id": pluginid},
+                    )
         return batch
 
 

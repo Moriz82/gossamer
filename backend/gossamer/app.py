@@ -6,10 +6,11 @@ import shutil
 import zipfile
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from io import BytesIO
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, Query, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -17,6 +18,9 @@ from pydantic import BaseModel, Field
 
 from gossamer.auth_deps import require_auth
 from gossamer.config import Settings, get_settings
+from gossamer.graph_store.base import GraphStore
+from gossamer.graph_store.factory import create_graph_store
+from gossamer.graph_store.neo4j_store import Neo4jGraphStore
 from gossamer.graph_store.sqlite_store import SqliteGraphStore
 from gossamer.graph_types.registry import graph_type_registry_payload
 from gossamer.ingestors.catalog import INGESTOR_INFO
@@ -26,6 +30,7 @@ from gossamer.pipeline import ingest_and_store
 from gossamer.queries.builtins import *  # noqa: F401,F403 - register builtins
 from gossamer.queries.registry import all_queries, get_query
 from gossamer.queries.yaml_loader import load_yaml_queries
+from gossamer.scanner_templates import build_templates_zip, list_templates
 from gossamer.runtime_settings import (
     clear_runtime_auth,
     env_settings_public,
@@ -38,10 +43,10 @@ from gossamer.runtime_settings import (
     settings_public_dict,
 )
 
-_STORE: SqliteGraphStore | None = None
+_STORE: GraphStore | None = None
 
 
-def get_store() -> SqliteGraphStore:
+def get_store() -> GraphStore:
     if _STORE is None:
         raise RuntimeError("Store not initialized")
     return _STORE
@@ -50,13 +55,13 @@ def get_store() -> SqliteGraphStore:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _STORE
-    s = get_settings()
+    s = get_effective_settings()
     s.database_path.parent.mkdir(parents=True, exist_ok=True)
     s.uploads_dir.mkdir(parents=True, exist_ok=True)
     s.exports_dir.mkdir(parents=True, exist_ok=True)
     _config = s.database_path.parent / "config"
     _config.mkdir(parents=True, exist_ok=True)
-    _STORE = SqliteGraphStore(s.database_path)
+    _STORE = create_graph_store(s)
     backend_dir = Path(__file__).resolve().parent
     load_yaml_queries(backend_dir / "queries" / "custom")
     yield
@@ -91,6 +96,7 @@ class CrawlOptions(BaseModel):
     max_pages: int | None = None
     scope_hosts: list[str] | None = None
     cookies: dict[str, str] | None = None
+    crawl_mode: Literal["crawl_only", "crawl_audit"] = "crawl_only"
 
 
 class SettingsPatchBody(BaseModel):
@@ -119,8 +125,10 @@ def _auth_info(env: Settings) -> dict[str, Any]:
 
 
 @api.get("/health")
-def health(store: Annotated[SqliteGraphStore, Depends(get_store)]) -> dict[str, str]:
-    return {"status": "ok", "db": str(store.path)}
+def health(store: Annotated[GraphStore, Depends(get_store)]) -> dict[str, str]:
+    backend = "neo4j" if isinstance(store, Neo4jGraphStore) else "sqlite"
+    info = store.health_descriptor()
+    return {"status": "ok", "backend": backend, "graph": info}
 
 
 @api.get("/settings")
@@ -204,6 +212,7 @@ def api_ingestors() -> list[dict[str, Any]]:
                 "name": ing.name,
                 "summary": meta.get("summary", ""),
                 "hints": meta.get("hints", ""),
+                "role": meta.get("role", "import"),
             }
         )
     return rows
@@ -214,19 +223,65 @@ def api_normalizers() -> list[dict[str, str]]:
     return all_normalizer_defs()
 
 
+@api.get("/templates")
+def api_templates_list() -> list[dict[str, Any]]:
+    return list_templates()
+
+
+@api.get("/templates/download")
+def api_templates_download(
+    ids: str | None = None,
+    download_all: bool = Query(False, alias="all"),
+) -> StreamingResponse:
+    if download_all:
+        id_list: list[str] | None = None
+    elif ids and ids.strip():
+        id_list = [x.strip() for x in ids.split(",") if x.strip()]
+    else:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Use query all=1 to download every template or ids=id1,id2 for a subset.",
+        )
+    try:
+        data, filename = build_templates_zip(id_list)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return StreamingResponse(
+        BytesIO(data),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @api.get("/graph-type-registry")
 def graph_type_registry() -> dict[str, Any]:
     return graph_type_registry_payload()
 
 
+@api.get("/findings")
+def api_findings(
+    store: Annotated[GraphStore, Depends(get_store)],
+    limit: int = 2000,
+) -> dict[str, Any]:
+    lim = max(1, min(limit, 50_000))
+    rows = store.list_findings(lim)
+    return {"findings": rows, "count": len(rows)}
+
+
 @api.get("/graph")
-def graph_snapshot(store: Annotated[SqliteGraphStore, Depends(get_store)]) -> dict[str, Any]:
+def graph_snapshot(store: Annotated[GraphStore, Depends(get_store)]) -> dict[str, Any]:
     snap = store.get_graph_snapshot()
     reg = graph_type_registry_payload()["nodes"]
     ereg = graph_type_registry_payload()["edges"]
     for n in snap["nodes"]:
         hints = reg.get(n["kind"], {})
-        n["label"] = n["properties"].get("url") or n["properties"].get("hostname") or n["kind"]
+        props = n["properties"]
+        if n["kind"] == "Finding":
+            n["label"] = (
+                str(props.get("name") or props.get("template_id") or "Finding")
+            )
+        else:
+            n["label"] = props.get("url") or props.get("hostname") or n["kind"]
         n["color"] = hints.get("color", "#888")
     for e in snap["edges"]:
         eh = ereg.get(e["kind"], {})
@@ -236,7 +291,7 @@ def graph_snapshot(store: Annotated[SqliteGraphStore, Depends(get_store)]) -> di
 
 @api.post("/ingest")
 async def ingest_upload(
-    store: Annotated[SqliteGraphStore, Depends(get_store)],
+    store: Annotated[GraphStore, Depends(get_store)],
     settings: Annotated[Settings, Depends(get_effective_settings)],
     file: UploadFile = File(...),
     source_label: str = "upload",
@@ -252,7 +307,7 @@ async def ingest_upload(
 @api.post("/ingest/path")
 def ingest_path(
     body: IngestRequest,
-    store: Annotated[SqliteGraphStore, Depends(get_store)],
+    store: Annotated[GraphStore, Depends(get_store)],
     settings: Annotated[Settings, Depends(get_effective_settings)],
 ) -> dict[str, Any]:
     if not body.path:
@@ -267,7 +322,7 @@ def ingest_path(
 @api.post("/ingest/crawl")
 def ingest_crawl(
     body: CrawlOptions,
-    store: Annotated[SqliteGraphStore, Depends(get_store)],
+    store: Annotated[GraphStore, Depends(get_store)],
     settings: Annotated[Settings, Depends(get_effective_settings)],
 ) -> dict[str, Any]:
     p = Path(body.seeds_file).expanduser()
@@ -282,6 +337,8 @@ def ingest_crawl(
         extra["scope_hosts"] = body.scope_hosts
     if body.cookies is not None:
         extra["cookies"] = body.cookies
+    if body.crawl_mode == "crawl_audit":
+        extra["audit"] = True
     stats = ingest_and_store(
         store,
         p,
@@ -296,7 +353,7 @@ def ingest_crawl(
 @api.post("/ingest/crawl/stream")
 def ingest_crawl_stream(
     body: CrawlOptions,
-    store: Annotated[SqliteGraphStore, Depends(get_store)],
+    store: Annotated[GraphStore, Depends(get_store)],
     settings: Annotated[Settings, Depends(get_effective_settings)],
 ) -> StreamingResponse:
     """SSE endpoint that streams crawl progress events."""
@@ -318,6 +375,8 @@ def ingest_crawl_stream(
         extra["scope_hosts"] = body.scope_hosts
     if body.cookies is not None:
         extra["cookies"] = body.cookies
+    if body.crawl_mode == "crawl_audit":
+        extra["audit"] = True
     extra["progress_callback"] = lambda evt: progress_q.put(evt)
 
     def _run() -> None:
@@ -352,7 +411,7 @@ def ingest_crawl_stream(
 
 
 @api.delete("/graph")
-def graph_clear(store: Annotated[SqliteGraphStore, Depends(get_store)]) -> dict[str, bool]:
+def graph_clear(store: Annotated[GraphStore, Depends(get_store)]) -> dict[str, bool]:
     store.clear()
     return {"ok": True}
 
@@ -365,29 +424,43 @@ def list_queries() -> list[dict[str, str]]:
 @api.post("/queries/{name}/run")
 def run_query(
     name: str,
-    store: Annotated[SqliteGraphStore, Depends(get_store)],
+    store: Annotated[GraphStore, Depends(get_store)],
 ) -> list[dict[str, Any]]:
     q = get_query(name)
     if not q:
         raise HTTPException(404, "unknown query")
-    conn = store._conn
-    return q.run(conn)
+    try:
+        return q.run(store)
+    except RuntimeError as exc:
+        if "SQLite graph backend" in str(exc):
+            raise HTTPException(
+                status.HTTP_501_NOT_IMPLEMENTED,
+                "This query is SQL-only; use the SQLite backend or a built-in query.",
+            ) from exc
+        raise
 
 
 @api.post("/export/bundle")
 def export_bundle(
-    store: Annotated[SqliteGraphStore, Depends(get_store)],
+    store: Annotated[GraphStore, Depends(get_store)],
     settings: Annotated[Settings, Depends(get_effective_settings)],
 ) -> JSONResponse:
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     zip_path = settings.exports_dir / f"gossamer-bundle-{ts}.zip"
-    manifest = {
-        "version": 1,
-        "exported_at": ts,
-        "database": store.path.name,
-    }
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.write(store.path, arcname=store.path.name)
+        if isinstance(store, Neo4jGraphStore):
+            payload = store.export_graph_dict()
+            manifest = {"version": 1, "exported_at": ts, "backend": "neo4j"}
+            zf.writestr("graph.json", json.dumps(payload, indent=2))
+        else:
+            assert isinstance(store, SqliteGraphStore)
+            manifest = {
+                "version": 1,
+                "exported_at": ts,
+                "backend": "sqlite",
+                "database": store.path.name,
+            }
+            zf.write(store.path, arcname=store.path.name)
         zf.writestr("manifest.json", json.dumps(manifest, indent=2))
     return JSONResponse({"ok": True, "path": str(zip_path)})
 
@@ -397,10 +470,53 @@ class ImportBundleBody(BaseModel):
     replace: bool = True
 
 
+class GraphPathBody(BaseModel):
+    from_id: str = Field(..., min_length=1)
+    to_id: str = Field(..., min_length=1)
+    max_hops: int | None = Field(default=None, ge=1, le=50)
+
+
+@api.get("/nodes/{node_id}/neighbors")
+def node_neighbors(
+    node_id: str,
+    store: Annotated[GraphStore, Depends(get_store)],
+    direction: str = "both",
+) -> dict[str, Any]:
+    if direction not in ("in", "out", "both"):
+        raise HTTPException(400, "direction must be in, out, or both")
+    try:
+        return store.get_neighbors(node_id, direction=direction)
+    except NotImplementedError as exc:
+        raise HTTPException(
+            status.HTTP_501_NOT_IMPLEMENTED,
+            "Neighbors are not implemented for this graph backend.",
+        ) from exc
+
+
+@api.post("/graph/path")
+def graph_path(
+    body: GraphPathBody,
+    store: Annotated[GraphStore, Depends(get_store)],
+    settings: Annotated[Settings, Depends(get_effective_settings)],
+) -> dict[str, Any]:
+    if not store.supports_path_queries():
+        raise HTTPException(
+            status.HTTP_501_NOT_IMPLEMENTED,
+            "Shortest-path search requires the Neo4j graph backend (GOSSAMER_NEO4J_URI).",
+        )
+    if not isinstance(store, Neo4jGraphStore):
+        raise HTTPException(500, "Store mismatch for path query")
+    mh = body.max_hops if body.max_hops is not None else settings.graph_path_max_hops
+    result = store.shortest_path(body.from_id, body.to_id, max_hops=mh)
+    if result is None:
+        raise HTTPException(404, "No path found")
+    return result
+
+
 @api.post("/import/bundle")
 def import_bundle(
     body: ImportBundleBody,
-    store: Annotated[SqliteGraphStore, Depends(get_store)],
+    store: Annotated[GraphStore, Depends(get_store)],
     settings: Annotated[Settings, Depends(get_effective_settings)],
 ) -> dict[str, Any]:
     zpath = Path(body.zip_path).expanduser()
@@ -413,7 +529,39 @@ def import_bundle(
     tmp.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(zpath, "r") as zf:
         zf.extractall(tmp)
+    manifest: dict[str, Any] = {}
+    mp = tmp / "manifest.json"
+    if mp.is_file():
+        try:
+            manifest = json.loads(mp.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            manifest = {}
+    backend = str(manifest.get("backend") or "").lower()
+    graph_json = tmp / "graph.json"
     db_files = list(tmp.glob("*.sqlite*")) + list(tmp.glob("*.db"))
+    use_neo4j_bundle = graph_json.is_file() and (backend == "neo4j" or not db_files)
+
+    if use_neo4j_bundle:
+        if not isinstance(store, Neo4jGraphStore):
+            shutil.rmtree(tmp, ignore_errors=True)
+            raise HTTPException(
+                400,
+                "Bundle contains a Neo4j graph export; set GOSSAMER_NEO4J_URI and restart to use Neo4j before re-importing.",
+            )
+        data = json.loads(graph_json.read_text(encoding="utf-8"))
+        store.import_graph_dict(data)
+        shutil.rmtree(tmp, ignore_errors=True)
+        return {"ok": True, "backend": "neo4j"}
+
+    if isinstance(store, Neo4jGraphStore):
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise HTTPException(
+            400,
+            "SQLite database bundles cannot be imported while GOSSAMER_NEO4J_URI is set; "
+            "use a Neo4j export zip or restart without Neo4j to import SQLite.",
+        )
+
+    assert isinstance(store, SqliteGraphStore)
     target_name = settings.database_path.name
     chosen: Path | None = tmp / target_name if (tmp / target_name).is_file() else None
     if chosen is None and db_files:
@@ -427,8 +575,8 @@ def import_bundle(
         settings.database_path.unlink()
     shutil.copy(chosen, settings.database_path)
     shutil.rmtree(tmp, ignore_errors=True)
-    _STORE = SqliteGraphStore(settings.database_path)
-    return {"ok": True, "database": str(settings.database_path)}
+    _STORE = create_graph_store(settings)
+    return {"ok": True, "database": str(settings.database_path), "backend": "sqlite"}
 
 
 app.include_router(api)

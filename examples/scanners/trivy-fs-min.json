@@ -1,0 +1,18 @@
+{
+  "SchemaVersion": 2,
+  "ArtifactName": "debian:12",
+  "Results": [
+    {
+      "Target": "debian:12",
+      "Vulnerabilities": [
+        {
+          "VulnerabilityID": "CVE-0000-00000",
+          "PkgName": "example-pkg",
+          "InstalledVersion": "1.0.0",
+          "Severity": "LOW",
+          "Title": "Example (replace with real Trivy export)"
+        }
+      ]
+    }
+  ]
+}

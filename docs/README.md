@@ -8,6 +8,7 @@ Well-scoped reference material for humans and AI assistants working on the **Gos
 2. **[GRAPH_MODEL.md](GRAPH_MODEL.md)** — What nodes and edges mean; stable IDs; merging; provenance.
 3. **[API.md](API.md)** — REST endpoints, environment variables, ingestion workflows.
 4. **[EXTENDING.md](EXTENDING.md)** — Copy-paste patterns for new ingestors, node/edge types, normalizers, queries.
+5. **[NEO4J_ROADMAP.md](NEO4J_ROADMAP.md)** — Planned move to Neo4j, Cypher APIs, BloodHound-style UI, findings module (roadmap only until implemented).
 
 ## Repo pointers
 

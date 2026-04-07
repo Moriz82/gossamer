@@ -23,6 +23,7 @@ export default function OperationsPanel() {
   const [crawlSource, setCrawlSource] = useState("crawl");
   const [maxDepth, setMaxDepth] = useState("");
   const [maxPages, setMaxPages] = useState("");
+  const [crawlMode, setCrawlMode] = useState<"crawl_only" | "crawl_audit">("crawl_only");
   const [scopeHosts, setScopeHosts] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -91,6 +92,7 @@ export default function OperationsPanel() {
     const reqBody: Record<string, unknown> = {
       seeds_file: crawlSeeds,
       source_label: crawlSource,
+      crawl_mode: crawlMode,
     };
     if (maxDepth) reqBody.max_depth = Number(maxDepth);
     if (maxPages) reqBody.max_pages = Number(maxPages);
@@ -223,6 +225,11 @@ export default function OperationsPanel() {
 
       <div className="card">
         <h2>Crawl (.urlseed)</h2>
+        <p className="muted">
+          <strong>Crawl only</strong> discovers hosts, endpoints, links, and forms.{" "}
+          <strong>Crawl + passive audit</strong> adds <code>Finding</code> nodes for HTTP 401/403/5xx, and
+          missing baseline security headers on HTML responses (no external scanner binaries).
+        </p>
         <div className="form-grid">
           <label className="full">
             Seeds file path (server)
@@ -243,6 +250,13 @@ export default function OperationsPanel() {
           <label>
             Max pages (optional)
             <input value={maxPages} onChange={(e) => setMaxPages(e.target.value)} placeholder="100" />
+          </label>
+          <label className="full">
+            Crawl mode
+            <select value={crawlMode} onChange={(e) => setCrawlMode(e.target.value as typeof crawlMode)}>
+              <option value="crawl_only">Crawl only (discover surface)</option>
+              <option value="crawl_audit">Crawl + passive audit (status + headers)</option>
+            </select>
           </label>
           <label className="full">
             Scope hosts (one per line, optional)

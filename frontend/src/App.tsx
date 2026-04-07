@@ -8,6 +8,8 @@ import QueriesPanel from "./panels/QueriesPanel";
 import DataPanel from "./panels/DataPanel";
 import RegistryPanel from "./panels/RegistryPanel";
 import IngestorsPanel from "./panels/IngestorsPanel";
+import VulnsPanel from "./panels/VulnsPanel";
+import ScannersPanel from "./panels/ScannersPanel";
 
 const UI_DEFAULT: UIPrefs = {
   graph_layout: "cose",
@@ -19,7 +21,16 @@ const UI_DEFAULT: UIPrefs = {
   wheel_sensitivity: 0.25,
 };
 
-type Tab = "graph" | "operations" | "settings" | "ingestors" | "queries" | "data" | "registry";
+type Tab =
+  | "graph"
+  | "operations"
+  | "settings"
+  | "ingestors"
+  | "queries"
+  | "vulns"
+  | "scanners"
+  | "data"
+  | "registry";
 
 type SettingsPayload = {
   runtime: { ui: Partial<UIPrefs> };
@@ -125,6 +136,8 @@ export default function App() {
   const tabs: { id: Tab; label: string }[] = [
     { id: "graph", label: "Graph" },
     { id: "operations", label: "Ingest & crawl" },
+    { id: "vulns", label: "Vulns" },
+    { id: "scanners", label: "Scanners" },
     { id: "settings", label: "Settings" },
     { id: "ingestors", label: "Ingestors" },
     { id: "queries", label: "Queries" },
@@ -188,6 +201,8 @@ export default function App() {
         {tab === "settings" ? <SettingsPanel onRuntimeUpdated={() => void loadSettings()} /> : null}
         {tab === "ingestors" ? <IngestorsPanel /> : null}
         {tab === "queries" ? <QueriesPanel /> : null}
+        {tab === "vulns" ? <VulnsPanel /> : null}
+        {tab === "scanners" ? <ScannersPanel /> : null}
         {tab === "data" ? <DataPanel /> : null}
         {tab === "registry" ? <RegistryPanel /> : null}
       </main>

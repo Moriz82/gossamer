@@ -45,7 +45,10 @@ def load_yaml_queries(directory: Path) -> int:
             name = nm
             description = desc
 
-            def run(self, conn: Any) -> list[dict[str, Any]]:
+            def run(self, store: Any) -> list[dict[str, Any]]:
+                conn = store.as_sqlite_connection()
+                if conn is None:
+                    raise RuntimeError("Custom YAML queries require the SQLite graph backend.")
                 cur = conn.execute(stmt)
                 out = _rows(cur)
                 for r in out:

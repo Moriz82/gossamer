@@ -35,6 +35,14 @@ class Settings(BaseSettings):
     auth_password: str = Field(default="gossamer")
     auth_disabled: bool = Field(default=False)
     crawl_persist_cookies: bool = Field(default=True)
+    # Neo4j graph backend (when neo4j_uri is non-empty, app uses Neo4j instead of SQLite for the graph)
+    neo4j_uri: str = Field(default="")
+    neo4j_user: str = Field(default="neo4j")
+    neo4j_password: str = Field(default="neo4j")
+    neo4j_database: str = Field(default="neo4j")
+    graph_snapshot_max_nodes: int = Field(default=8000, ge=100, le=500_000)
+    graph_snapshot_max_edges: int = Field(default=16_000, ge=100, le=1_000_000)
+    graph_path_max_hops: int = Field(default=25, ge=1, le=50)
 
 
 def get_settings() -> Settings:

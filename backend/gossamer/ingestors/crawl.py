@@ -24,6 +24,89 @@ logger = logging.getLogger(__name__)
 # Sentinel path: ingest expects a file; crawl uses a .url seed file (one URL per line)
 
 
+def _emit_crawl_audit_findings(
+    batch: RawObservationBatch,
+    *,
+    url: str,
+    method: str,
+    status: int | None,
+    headers: dict[str, str],
+    content_type: str,
+    source_key: str,
+    source_label: str,
+) -> None:
+    """Passive checks: interesting status codes + baseline security headers on HTML."""
+    from gossamer.ingestors.finding_helpers import emit_finding_on_target
+
+    if status is not None:
+        if status in (401, 403):
+            emit_finding_on_target(
+                batch,
+                scanner="crawl_audit",
+                dedup_parts=(f"status_{status}", url),
+                target_uri=url,
+                method=method,
+                source_label=source_label,
+                source_key=source_key,
+                finding_props={
+                    "scanner": "crawl_audit",
+                    "name": f"HTTP {status} — auth / access control surface",
+                    "severity": "medium",
+                    "template_id": f"http_{status}",
+                    "description": f"Passive crawl observed HTTP {status} on this URL.",
+                },
+                edge_props={"check": "http_status"},
+            )
+        elif status >= 500:
+            emit_finding_on_target(
+                batch,
+                scanner="crawl_audit",
+                dedup_parts=(f"status_{status}", url),
+                target_uri=url,
+                method=method,
+                source_label=source_label,
+                source_key=source_key,
+                finding_props={
+                    "scanner": "crawl_audit",
+                    "name": f"HTTP {status} — server error",
+                    "severity": "high",
+                    "template_id": f"http_{status}",
+                    "description": f"Passive crawl observed HTTP {status}.",
+                },
+                edge_props={"check": "http_status"},
+            )
+
+    ct = (content_type or "").lower()
+    if "text/html" not in ct:
+        return
+    lh = {k.lower(): v for k, v in headers.items()}
+    missing: list[str] = []
+    if "x-content-type-options" not in lh:
+        missing.append("X-Content-Type-Options")
+    if "x-frame-options" not in lh:
+        missing.append("X-Frame-Options")
+    if "content-security-policy" not in lh and "content-security-policy-report-only" not in lh:
+        missing.append("Content-Security-Policy")
+    if missing:
+        emit_finding_on_target(
+            batch,
+            scanner="crawl_audit",
+            dedup_parts=("security_headers", url, ",".join(missing)),
+            target_uri=url,
+            method=method,
+            source_label=source_label,
+            source_key=source_key,
+            finding_props={
+                "scanner": "crawl_audit",
+                "name": "Missing recommended security headers",
+                "severity": "low",
+                "template_id": "missing_security_headers",
+                "description": "Not present on response: " + ", ".join(missing),
+            },
+            edge_props={"check": "security_headers"},
+        )
+
+
 class CrawlIngestor(Ingestor):
     name = "crawl_seed"
 
@@ -189,6 +272,18 @@ class CrawlIngestor(Ingestor):
                         source=ctx.source_label,
                     )
                 )
+
+                if ctx.options.get("audit"):
+                    _emit_crawl_audit_findings(
+                        batch,
+                        url=canon,
+                        method=method,
+                        status=status,
+                        headers=result.headers or {},
+                        content_type=ctype or "",
+                        source_key=source_key,
+                        source_label=ctx.source_label,
+                    )
 
                 # Emit redirect chain: src[0] -> src[1] -> ... -> final_url
                 if result.redirect_chain:

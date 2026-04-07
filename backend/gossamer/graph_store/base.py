@@ -21,3 +21,25 @@ class GraphStore(ABC):
 
     @abstractmethod
     def clear(self) -> None: ...
+
+    def close(self) -> None:
+        pass
+
+    def supports_sql_queries(self) -> bool:
+        return False
+
+    def health_descriptor(self) -> str:
+        return "graph"
+
+    def as_sqlite_connection(self) -> Any | None:
+        return None
+
+    def get_neighbors(self, node_id: str, direction: str = "both") -> dict[str, Any]:
+        raise NotImplementedError
+
+    def supports_path_queries(self) -> bool:
+        return False
+
+    def list_findings(self, limit: int = 2000) -> list[dict[str, Any]]:
+        nodes = self.get_graph_snapshot()["nodes"]
+        return [n for n in nodes if n.get("kind") == "Finding"][:limit]

@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from gossamer.config import Settings, get_settings
-from gossamer.graph_store.sqlite_store import SqliteGraphStore
+from gossamer.graph_store.base import GraphStore
 from gossamer.graph_types.registry import EDGE_TYPE_DEFS, NODE_TYPE_DEFS
 from gossamer.ingestors.plugins import *  # noqa: F401,F403 - register ingestors
 from gossamer.ingestors.registry import get_ingestor
@@ -45,6 +45,17 @@ def _norm_endpoint_key(key: str, chain: list[Any], nctx: dict[str, Any]) -> str:
     return f"{method.upper()}|{url2}"
 
 
+def _norm_finding_key(key: str, chain: list[Any], nctx: dict[str, Any]) -> str:
+    """Normalize Finding keys scanner|dedup|url when the third segment is http(s)."""
+    parts = key.split("|", 2)
+    if len(parts) < 3:
+        return key
+    a, b, url = parts[0], parts[1], parts[2]
+    if url.startswith("http://") or url.startswith("https://"):
+        return f"{a}|{b}|{_normalize_url(url, chain, nctx)}"
+    return key
+
+
 def _normalize_batch(batch: RawObservationBatch, settings: Settings) -> RawObservationBatch:
     chain = build_chain(settings.normalizer_order)
     nctx: dict[str, Any] = {}
@@ -67,6 +78,15 @@ def _normalize_batch(batch: RawObservationBatch, settings: Settings) -> RawObser
                 key = _norm_endpoint_key(n.key, chain, nctx)
         elif n.kind == "Source":
             key = n.key
+        elif n.kind == "Finding":
+            key = _norm_finding_key(n.key, chain, nctx)
+            mat = props.get("matched_at")
+            if mat and (
+                str(mat).startswith("http://") or str(mat).startswith("https://")
+            ):
+                props["matched_at"] = _normalize_url(str(mat), chain, nctx)
+        else:
+            key = n.key
         nodes.append(RawNode(kind=n.kind, key=key, properties=props, source=n.source))
 
     edges: list[RawEdge] = []
@@ -77,10 +97,14 @@ def _normalize_batch(batch: RawObservationBatch, settings: Settings) -> RawObser
             sk = _normalize_host(sk, chain, nctx)
         elif e.src_kind == "Endpoint":
             sk = _norm_endpoint_key(sk, chain, nctx)
+        elif e.src_kind == "Finding":
+            sk = _norm_finding_key(sk, chain, nctx)
         if e.dst_kind == "Host":
             dk = _normalize_host(dk, chain, nctx)
         elif e.dst_kind == "Endpoint":
             dk = _norm_endpoint_key(dk, chain, nctx)
+        elif e.dst_kind == "Finding":
+            dk = _norm_finding_key(dk, chain, nctx)
         edges.append(
             RawEdge(
                 kind=e.kind,
@@ -95,7 +119,7 @@ def _normalize_batch(batch: RawObservationBatch, settings: Settings) -> RawObser
     return RawObservationBatch(nodes=nodes, edges=edges)
 
 
-def persist_batch(store: SqliteGraphStore, batch: RawObservationBatch) -> None:
+def persist_batch(store: GraphStore, batch: RawObservationBatch) -> None:
     node_ids: dict[tuple[str, str], str] = {}
     for n in batch.nodes:
         typ = NODE_TYPE_DEFS.get(n.kind)
@@ -152,7 +176,7 @@ def run_ingest(
 
 
 def ingest_and_store(
-    store: SqliteGraphStore,
+    store: GraphStore,
     path: Path,
     source_label: str,
     ingestor_hint: str | None = None,

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 
+from gossamer.graph_store.sqlite_store import SqliteGraphStore
 from gossamer.queries.registry import _REGISTRY, get_query
 from gossamer.queries.yaml_loader import _SAFE_SQL, load_yaml_queries
 
@@ -47,5 +47,6 @@ def test_yaml_loads_valid_custom_query(tmp_path) -> None:
     assert load_yaml_queries(tmp_path) == 1
     q = get_query("yaml_loader_smoke_query")
     assert q is not None
-    rows = q.run(sqlite3.connect(":memory:"))
+    store = SqliteGraphStore(tmp_path / "yaml_q.sqlite")
+    rows = q.run(store)
     assert rows == [{"one": 1}]

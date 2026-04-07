@@ -1,0 +1,25 @@
+{
+  "templates": [
+    {
+      "id": "nuclei-sample",
+      "file": "nuclei-sample.jsonl",
+      "title": "Nuclei JSONL sample",
+      "description": "Single-line Nuclei finding export. Ingestor: nuclei_json.",
+      "ingestor_hint": "nuclei_json"
+    },
+    {
+      "id": "sarif-min",
+      "file": "sarif-min.json",
+      "title": "SARIF 2.1 minimal",
+      "description": "One result with an https artifact URI. Ingestor: sarif_json.",
+      "ingestor_hint": "sarif_json"
+    },
+    {
+      "id": "trivy-fs-min",
+      "file": "trivy-fs-min.json",
+      "title": "Trivy filesystem sample",
+      "description": "SchemaVersion + Results with one CVE-style row. Ingestor: trivy_json.",
+      "ingestor_hint": "trivy_json"
+    }
+  ]
+}

@@ -47,3 +47,45 @@ def test_crawl_ingest_fetches_seed_and_internal_link(mock_client_cls, tmp_path: 
     urls = [n["properties"].get("url") for n in snap["nodes"] if n["kind"] == "Endpoint"]
     assert any(u and "crawl-mock.test" in str(u) for u in urls)
     store.close()
+
+
+@patch("gossamer.ingestors.crawl.httpx.Client")
+def test_crawl_audit_emits_header_finding(mock_client_cls, tmp_path: Path) -> None:
+    seed = tmp_path / "seeds.urlseed"
+    seed.write_text("https://audit-mock.test/start\n", encoding="utf-8")
+    html = "<html><body></body></html>"
+
+    def make_resp(status: int, ctype: str, text: str, hdrs: dict | None = None) -> MagicMock:
+        r = MagicMock()
+        r.status_code = status
+        r.headers = hdrs or {"content-type": ctype}
+        r.text = text
+        r.is_redirect = False
+        return r
+
+    inst = MagicMock()
+    inst.__enter__ = MagicMock(return_value=inst)
+    inst.__exit__ = MagicMock(return_value=False)
+    inst.get = MagicMock(
+        side_effect=[
+            make_resp(404, "text/plain", ""),
+            make_resp(404, "text/plain", ""),
+            make_resp(200, "text/html", html, {}),
+        ]
+    )
+    mock_client_cls.return_value = inst
+
+    db = tmp_path / "crawl-audit.sqlite"
+    store = SqliteGraphStore(db)
+    settings = Settings(database_path=db, crawl_max_depth=1, crawl_max_pages=2, scope_hosts=[])
+    ingest_and_store(
+        store,
+        seed,
+        "crawl-a",
+        "crawl_seed",
+        settings,
+        extra_options={"max_depth": 1, "max_pages": 2, "audit": True},
+    )
+    kinds = {n["kind"] for n in store.get_graph_snapshot()["nodes"]}
+    assert "Finding" in kinds
+    store.close()

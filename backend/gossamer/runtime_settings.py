@@ -141,6 +141,8 @@ def patch_runtime(settings: Settings, body: dict[str, Any]) -> RuntimePayload:
 def settings_public_dict(s: Settings) -> dict[str, Any]:
     return {
         "database_path": str(s.database_path),
+        "graph_backend": "neo4j" if (s.neo4j_uri or "").strip() else "sqlite",
+        "neo4j_uri": (s.neo4j_uri or "").strip(),
         "uploads_dir": str(s.uploads_dir),
         "exports_dir": str(s.exports_dir),
         "cors_origins": list(s.cors_origins),
@@ -171,4 +173,5 @@ def env_settings_public(env: Settings) -> dict[str, Any]:
     d["uploads_dir"] = str(env.uploads_dir)
     d["exports_dir"] = str(env.exports_dir)
     d["auth_password"] = "[redacted]" if env.auth_password else ""
+    d["neo4j_password"] = "[redacted]" if env.neo4j_password else ""
     return d

@@ -24,6 +24,15 @@ class SqliteGraphStore(GraphStore):
         self._conn.execute("PRAGMA foreign_keys = ON")
         self.init_schema()
 
+    def supports_sql_queries(self) -> bool:
+        return True
+
+    def health_descriptor(self) -> str:
+        return f"sqlite:{self.path}"
+
+    def as_sqlite_connection(self) -> sqlite3.Connection:
+        return self._conn
+
     def init_schema(self) -> None:
         self._conn.executescript(
             """
@@ -151,6 +160,82 @@ class SqliteGraphStore(GraphStore):
         self._conn.execute("DELETE FROM edges")
         self._conn.execute("DELETE FROM nodes")
         self._conn.commit()
+
+    def get_neighbors(self, node_id: str, direction: str = "both") -> dict[str, Any]:
+        out: dict[str, list[dict[str, Any]]] = {"inbound_groups": [], "outbound_groups": []}
+        if direction in ("out", "both"):
+            groups: dict[str, list[dict[str, Any]]] = {}
+            cur = self._conn.execute(
+                """
+                SELECT e.kind, n.id, n.kind AS nkind, n.key, n.properties_json
+                FROM edges e JOIN nodes n ON e.dst_id = n.id
+                WHERE e.src_id = ?
+                ORDER BY e.kind, n.id
+                """,
+                (node_id,),
+            )
+            for r in cur:
+                groups.setdefault(r["kind"], []).append(
+                    {
+                        "id": r["id"],
+                        "kind": r["nkind"],
+                        "key": r["key"],
+                        "properties": json.loads(r["properties_json"]),
+                    }
+                )
+            out["outbound_groups"] = [
+                {"rel_type": k, "nodes": v} for k, v in sorted(groups.items())
+            ]
+        if direction in ("in", "both"):
+            groups = {}
+            cur = self._conn.execute(
+                """
+                SELECT e.kind, n.id, n.kind AS nkind, n.key, n.properties_json
+                FROM edges e JOIN nodes n ON e.src_id = n.id
+                WHERE e.dst_id = ?
+                ORDER BY e.kind, n.id
+                """,
+                (node_id,),
+            )
+            for r in cur:
+                groups.setdefault(r["kind"], []).append(
+                    {
+                        "id": r["id"],
+                        "kind": r["nkind"],
+                        "key": r["key"],
+                        "properties": json.loads(r["properties_json"]),
+                    }
+                )
+            out["inbound_groups"] = [
+                {"rel_type": k, "nodes": v} for k, v in sorted(groups.items())
+            ]
+        return out
+
+    def supports_path_queries(self) -> bool:
+        return False
+
+    def list_findings(self, limit: int = 2000) -> list[dict[str, Any]]:
+        lim = max(1, min(int(limit), 50_000))
+        out: list[dict[str, Any]] = []
+        cur = self._conn.execute(
+            """
+            SELECT id, kind, key, properties_json FROM nodes
+            WHERE kind = 'Finding'
+            ORDER BY updated_at DESC, id
+            LIMIT ?
+            """,
+            (lim,),
+        )
+        for r in cur:
+            out.append(
+                {
+                    "id": r["id"],
+                    "kind": r["kind"],
+                    "key": r["key"],
+                    "properties": json.loads(r["properties_json"]),
+                }
+            )
+        return out
 
     def close(self) -> None:
         self._conn.close()

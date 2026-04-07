@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { apiJson } from "../api";
 
-type IngestorRow = { name: string; summary: string; hints: string };
+type IngestorRow = { name: string; summary: string; hints: string; role: string };
 type NormRow = { name: string; description: string };
 
 export default function IngestorsPanel() {
@@ -46,6 +46,7 @@ export default function IngestorsPanel() {
             <thead>
               <tr>
                 <th>Name</th>
+                <th>Role</th>
                 <th>Summary</th>
                 <th>Detection / hints</th>
               </tr>
@@ -55,6 +56,9 @@ export default function IngestorsPanel() {
                 <tr key={r.name}>
                   <td>
                     <code>{r.name}</code>
+                  </td>
+                  <td>
+                    <span className="role-pill">{r.role || "import"}</span>
                   </td>
                   <td>{r.summary}</td>
                   <td className="muted">{r.hints}</td>

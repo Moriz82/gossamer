@@ -1,4 +1,14 @@
 services:
+  neo4j:
+    image: neo4j:5.26-community
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      NEO4J_AUTH: neo4j/gossamer-neo4j-password
+    volumes:
+      - neo4j_data:/data
+
   gossamer-api:
     build: ./backend
     ports:
@@ -7,8 +17,14 @@ services:
       GOSSAMER_DATABASE_PATH: /data/graph.sqlite
       GOSSAMER_UPLOADS_DIR: /data/uploads
       GOSSAMER_EXPORTS_DIR: /data/exports
+      GOSSAMER_NEO4J_URI: bolt://neo4j:7687
+      GOSSAMER_NEO4J_USER: neo4j
+      GOSSAMER_NEO4J_PASSWORD: gossamer-neo4j-password
+      GOSSAMER_NEO4J_DATABASE: neo4j
     volumes:
       - gossamer_data:/data
+    depends_on:
+      - neo4j
 
   gossamer-web:
     build: ./frontend
@@ -19,3 +35,4 @@ services:
 
 volumes:
   gossamer_data:
+  neo4j_data:
