@@ -41,7 +41,53 @@ export type UIPrefs = {
   wheel_sensitivity: number;
 };
 
+type LabelMode = "smart" | "full" | "hidden" | "kind";
+
 const LAYOUTS = ["cose", "breadthfirst", "circle", "grid", "concentric", "random"] as const;
+
+function smartLabel(kind: string, props: Record<string, unknown>, mode: LabelMode, maxLen: number): string {
+  if (mode === "hidden") return "";
+  if (mode === "kind") return kind;
+
+  const url = String(props.url || props.action_url || "");
+  const hostname = String(props.hostname || "");
+  const name = String(props.name || "");
+
+  if (mode === "full") {
+    const full = url || hostname || name || kind;
+    return `${kind}: ${full}`;
+  }
+
+  switch (kind) {
+    case "Endpoint": {
+      if (!url) return kind;
+      try {
+        const u = new URL(url);
+        const path = u.pathname + (u.search ? u.search.slice(0, 20) : "");
+        return path.length > maxLen ? path.slice(0, maxLen) + "..." : path;
+      } catch {
+        return url.slice(0, maxLen);
+      }
+    }
+    case "Host":
+      return hostname || kind;
+    case "Finding":
+      return name ? (name.length > 25 ? name.slice(0, 25) + "..." : name) : "Finding";
+    case "Form": {
+      const method = String(props.method || "GET");
+      if (!url) return `${method} form`;
+      try {
+        return `${method} ${new URL(url).pathname}`;
+      } catch {
+        return `${method} ${url.slice(0, 20)}`;
+      }
+    }
+    case "Source":
+      return name || "Source";
+    default:
+      return kind;
+  }
+}
 
 function makeStylesheet(ui: UIPrefs): Stylesheet[] {
   return [
@@ -50,11 +96,12 @@ function makeStylesheet(ui: UIPrefs): Stylesheet[] {
       style: {
         label: "data(label)",
         "font-size": ui.font_size,
+        "min-zoomed-font-size": 12,
         color: "#e6e6e6",
         "text-outline-width": 2,
         "text-outline-color": "#111",
-        width: ui.node_size,
-        height: ui.node_size,
+        width: "data(size)",
+        height: "data(size)",
         "background-color": "data(bg)",
       },
     },
@@ -98,12 +145,15 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi }: Props) {
 
   const [selected, setSelected] = useState<GraphNode | GraphEdge | null>(null);
   const [status, setStatus] = useState<string>("");
-  const [labelMode, setLabelMode] = useState<"smart" | "full" | "hidden" | "kind">("smart");
+  const [labelMode, setLabelMode] = useState<LabelMode>("smart");
+  const labelModeRef = useRef(labelMode);
+  labelModeRef.current = labelMode;
   const [graphStats, setGraphStats] = useState<GraphStats | null>(null);
   const [enabledKinds, setEnabledKinds] = useState<Set<string>>(new Set(["Host", "Endpoint", "Form"]));
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchHit[]>([]);
   const [typeColors, setTypeColors] = useState<Record<string, string>>({});
+  const [tooltip, setTooltip] = useState<{x: number; y: number; label: string; kind: string} | null>(null);
 
   const applyStyles = useCallback(() => {
     const cy = cyRef.current;
@@ -148,10 +198,11 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi }: Props) {
     const nodes = data.nodes.map((n) => ({
       data: {
         id: n.id,
-        label: `${n.kind}: ${String(n.label).slice(0, cur.label_max_len)}`,
+        label: smartLabel(n.kind, n.properties, labelModeRef.current, cur.label_max_len),
         bg: n.color || DEFAULT_NODE_COLOR,
         kind: n.kind,
         props: n.properties,
+        size: n.kind === "Host" ? cur.node_size * 1.4 : n.kind === "Source" ? cur.node_size * 0.7 : cur.node_size,
       },
     }));
     const edges = data.edges.map((e) => ({
@@ -214,6 +265,19 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi }: Props) {
       } as GraphEdge);
     });
 
+    cy.on("mouseover", "node", (evt) => {
+      const node = evt.target;
+      const pos = node.renderedPosition();
+      const data = node.data();
+      setTooltip({
+        x: pos.x,
+        y: pos.y - 20,
+        label: String(data.props?.url || data.props?.hostname || data.props?.name || data.label || ""),
+        kind: data.kind,
+      });
+    });
+    cy.on("mouseout", "node", () => setTooltip(null));
+
     return () => {
       cy.destroy();
       cyRef.current = null;
@@ -244,7 +308,7 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi }: Props) {
       return;
     }
     void loadGraph();
-  }, [ui.label_max_len, loadGraph]);
+  }, [ui.label_max_len, labelMode, loadGraph]);
 
   useEffect(() => {
     if (!searchQuery.trim()) {
@@ -303,85 +367,42 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi }: Props) {
           </select>
         </label>
         <label className="inline">
-          Label len
-          <input
-            type="range"
-            min={12}
-            max={80}
-            step={1}
-            value={ui.label_max_len}
-            onChange={(e) => onUiChange({ label_max_len: Number(e.target.value) })}
-          />
-        </label>
-        <label className="inline">
-          Zoom wheel
-          <input
-            type="range"
-            min={0.05}
-            max={1}
-            step={0.05}
-            value={ui.wheel_sensitivity}
-            onChange={(e) => onUiChange({ wheel_sensitivity: Number(e.target.value) })}
-          />
-        </label>
-        <label className="inline">
           Labels
-          <select
-            value={labelMode}
-            onChange={(e) => setLabelMode(e.target.value as "smart" | "full" | "hidden" | "kind")}
-          >
+          <select value={labelMode} onChange={(e) => setLabelMode(e.target.value as LabelMode)}>
             <option value="smart">Smart</option>
             <option value="full">Full</option>
-            <option value="hidden">Hidden</option>
             <option value="kind">Kind only</option>
+            <option value="hidden">Hidden</option>
           </select>
+        </label>
+        <label className="inline">
+          Label len
+          <input type="range" min={12} max={80} step={1} value={ui.label_max_len}
+            onChange={(e) => onUiChange({ label_max_len: Number(e.target.value) })} />
+        </label>
+        <label className="inline">
+          Zoom
+          <input type="range" min={0.05} max={1} step={0.05} value={ui.wheel_sensitivity}
+            onChange={(e) => onUiChange({ wheel_sensitivity: Number(e.target.value) })} />
         </label>
         <details className="toolbar-details">
           <summary>Display</summary>
           <div className="toolbar-details-content">
-            <label className="inline">
-              Node size
-              <input
-                type="range"
-                min={8}
-                max={48}
-                step={1}
-                value={ui.node_size}
-                onChange={(e) => onUiChange({ node_size: Number(e.target.value) })}
-              />
+            <label className="inline">Node size
+              <input type="range" min={8} max={48} step={1} value={ui.node_size}
+                onChange={(e) => onUiChange({ node_size: Number(e.target.value) })} />
             </label>
-            <label className="inline">
-              Font
-              <input
-                type="range"
-                min={6}
-                max={16}
-                step={1}
-                value={ui.font_size}
-                onChange={(e) => onUiChange({ font_size: Number(e.target.value) })}
-              />
+            <label className="inline">Font
+              <input type="range" min={6} max={16} step={1} value={ui.font_size}
+                onChange={(e) => onUiChange({ font_size: Number(e.target.value) })} />
             </label>
-            <label className="inline">
-              Edge W
-              <input
-                type="range"
-                min={0.5}
-                max={4}
-                step={0.25}
-                value={ui.edge_width}
-                onChange={(e) => onUiChange({ edge_width: Number(e.target.value) })}
-              />
+            <label className="inline">Edge W
+              <input type="range" min={0.5} max={4} step={0.25} value={ui.edge_width}
+                onChange={(e) => onUiChange({ edge_width: Number(e.target.value) })} />
             </label>
-            <label className="inline">
-              Edge alpha
-              <input
-                type="range"
-                min={0.2}
-                max={1}
-                step={0.05}
-                value={ui.edge_opacity}
-                onChange={(e) => onUiChange({ edge_opacity: Number(e.target.value) })}
-              />
+            <label className="inline">Edge alpha
+              <input type="range" min={0.2} max={1} step={0.05} value={ui.edge_opacity}
+                onChange={(e) => onUiChange({ edge_opacity: Number(e.target.value) })} />
             </label>
           </div>
         </details>
@@ -394,36 +415,22 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi }: Props) {
         <div className="sidebar-section">
           <div className="sidebar-section-header">Search</div>
           <div className="sidebar-search">
-            <input
-              type="text"
-              placeholder="Search nodes..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="sidebar-search-input"
-            />
+            <input type="text" placeholder="Search nodes..." value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)} className="sidebar-search-input" />
             {searchQuery && (
-              <button type="button" className="sidebar-search-clear" onClick={() => setSearchQuery("")}>
-                &times;
-              </button>
+              <button type="button" className="sidebar-search-clear" onClick={() => setSearchQuery("")}>&times;</button>
             )}
           </div>
           {searchResults.length > 0 && (
             <div className="sidebar-results">
               {searchResults.map((r) => (
-                <button
-                  key={r.id}
-                  type="button"
-                  className="sidebar-result"
+                <button key={r.id} type="button" className="sidebar-result"
                   onClick={() => {
                     const cy = cyRef.current;
                     if (!cy) return;
                     const node = cy.getElementById(r.id);
-                    if (node.length) {
-                      cy.animate({ center: { eles: node }, zoom: 2 }, { duration: 300 });
-                      node.select();
-                    }
-                  }}
-                >
+                    if (node.length) { cy.animate({ center: { eles: node }, zoom: 2 }, { duration: 300 }); node.select(); }
+                  }}>
                   <span className="color-swatch" style={{ backgroundColor: r.color }} />
                   <span className="sidebar-result-kind">{r.kind}</span>
                   <span className="sidebar-result-label">{r.label}</span>
@@ -432,7 +439,6 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi }: Props) {
             </div>
           )}
         </div>
-
         <div className="sidebar-section">
           <div className="sidebar-section-header">
             Node Types
@@ -447,38 +453,31 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi }: Props) {
           </div>
           {graphStats && Object.entries(graphStats.node_counts).map(([kind, count]) => (
             <label key={kind} className="sidebar-filter">
-              <input
-                type="checkbox"
-                checked={enabledKinds.has(kind)}
-                onChange={() => {
-                  setEnabledKinds(prev => {
-                    const next = new Set(prev);
-                    if (next.has(kind)) next.delete(kind);
-                    else next.add(kind);
-                    return next;
-                  });
-                }}
-              />
+              <input type="checkbox" checked={enabledKinds.has(kind)}
+                onChange={() => { setEnabledKinds(prev => { const next = new Set(prev); if (next.has(kind)) next.delete(kind); else next.add(kind); return next; }); }} />
               <span className="color-swatch" style={{ backgroundColor: typeColors[kind] || DEFAULT_NODE_COLOR }} />
               <span className="sidebar-filter-name">{kind}</span>
               <span className="badge">{count}</span>
             </label>
           ))}
         </div>
-
         <div className="sidebar-section">
           <div className="sidebar-section-header">Quick Actions</div>
           <div className="sidebar-actions">
-            <button type="button" className="ghost" onClick={() => {
-              setEnabledKinds(new Set(["Host"]));
-            }}>Load hosts only</button>
-            <button type="button" className="ghost" onClick={() => {
-              if (graphStats) setEnabledKinds(new Set(Object.keys(graphStats.node_counts)));
-            }}>Load full graph</button>
+            <button type="button" className="ghost" onClick={() => setEnabledKinds(new Set(["Host"]))}>Load hosts only</button>
+            <button type="button" className="ghost" onClick={() => { if (graphStats) setEnabledKinds(new Set(Object.keys(graphStats.node_counts))); }}>Load full graph</button>
           </div>
         </div>
       </div>
-      <div ref={containerRef} className="cy" />
+      <div className="graph-canvas-wrap">
+        <div ref={containerRef} className="cy" />
+        {tooltip && (
+          <div className="graph-tooltip" style={{ left: tooltip.x, top: tooltip.y }}>
+            <span className="graph-tooltip-kind">{tooltip.kind}</span>
+            <span className="graph-tooltip-label">{tooltip.label}</span>
+          </div>
+        )}
+      </div>
       <div className="graph-inspector">
         <h3 className="inspector-title">Inspector</h3>
         {!selected ? (
