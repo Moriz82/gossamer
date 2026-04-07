@@ -35,57 +35,61 @@ export default function IngestorsPanel() {
 
   return (
     <div className="panel-block">
-      <h2>Registered ingestors</h2>
-      <p className="muted">
-        Use the ingestor <strong>name</strong> as <code>ingestor_hint</code> on upload or path ingest when
-        auto-detection is wrong. Order in the backend plugin list matters for ambiguous files.
-      </p>
-      <div className="settings-table-wrap">
-        <table className="settings-table">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Summary</th>
-              <th>Detection / hints</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(ingestors ?? []).map((r) => (
-              <tr key={r.name}>
-                <td>
-                  <code>{r.name}</code>
-                </td>
-                <td>{r.summary}</td>
-                <td className="muted">{r.hints}</td>
+      <div className="card">
+        <h2>Registered ingestors</h2>
+        <p className="muted">
+          Use the ingestor <strong>name</strong> as <code>ingestor_hint</code> on upload or path ingest when
+          auto-detection is wrong. Order in the backend plugin list matters for ambiguous files.
+        </p>
+        <div className="settings-table-wrap">
+          <table className="settings-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Summary</th>
+                <th>Detection / hints</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {(ingestors ?? []).map((r) => (
+                <tr key={r.name}>
+                  <td>
+                    <code>{r.name}</code>
+                  </td>
+                  <td>{r.summary}</td>
+                  <td className="muted">{r.hints}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      <h2>URL normalizers</h2>
-      <p className="muted">
-        Configure pipeline order under <strong>Settings</strong>. Names must match these registry entries.
-      </p>
-      <div className="settings-table-wrap">
-        <table className="settings-table">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Description</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(normalizers ?? []).map((r) => (
-              <tr key={r.name}>
-                <td>
-                  <code>{r.name}</code>
-                </td>
-                <td>{r.description}</td>
+      <div className="card">
+        <h2>URL normalizers</h2>
+        <p className="muted">
+          Configure pipeline order under <strong>Settings</strong>. Names must match these registry entries.
+        </p>
+        <div className="settings-table-wrap">
+          <table className="settings-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Description</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {(normalizers ?? []).map((r) => (
+                <tr key={r.name}>
+                  <td>
+                    <code>{r.name}</code>
+                  </td>
+                  <td>{r.description}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

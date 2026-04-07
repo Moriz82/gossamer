@@ -20,7 +20,7 @@ export class ErrorBoundary extends Component<Props, State> {
       return (
         <div className="error-boundary">
           <h1>Something went wrong</h1>
-          <pre>{this.state.error.message}</pre>
+          <pre className="panel-msg">{this.state.error.message}</pre>
           <button type="button" onClick={() => window.location.reload()}>
             Reload page
           </button>
