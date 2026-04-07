@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -10,6 +11,7 @@ from gossamer.ingestors.base import Ingestor
 from gossamer.ingestors.discovery import discover_from_robots, discover_from_sitemap
 from gossamer.ingestors.extractors import extract_all
 from gossamer.ingestors.fetch import fetch_url
+from gossamer.ingestors.forms import extract_forms
 from gossamer.ingestors.registry import register_ingestor
 from gossamer.models import IngestContext, RawEdge, RawNode, RawObservationBatch
 from gossamer.scope import host_allowed
@@ -252,6 +254,56 @@ class CrawlIngestor(Ingestor):
                         )
                     )
                     queue.append((dest_full, depth + 1))
+
+                # --- Form extraction ---
+                if "text/html" in ctype.lower():
+                    for form in extract_forms(body, canon):
+                        form_key = f"form|{form.method}|{form.action_url}"
+                        batch.nodes.append(
+                            RawNode(
+                                kind="Form",
+                                key=form_key,
+                                properties={
+                                    "action_url": form.action_url,
+                                    "method": form.method,
+                                    "input_fields": json.dumps(form.input_fields),
+                                    "enctype": form.enctype,
+                                    "form_id": form.form_id or "",
+                                },
+                                source=ctx.source_label,
+                            )
+                        )
+                        batch.edges.append(
+                            RawEdge(
+                                kind="contains_form",
+                                src_kind="Endpoint",
+                                src_key=ep_key,
+                                dst_kind="Form",
+                                dst_key=form_key,
+                                properties={},
+                                source=ctx.source_label,
+                            )
+                        )
+                        action_ep_key = f"{form.method}|{form.action_url}"
+                        batch.nodes.append(
+                            RawNode(
+                                kind="Endpoint",
+                                key=action_ep_key,
+                                properties={"url": form.action_url, "method": form.method},
+                                source=ctx.source_label,
+                            )
+                        )
+                        batch.edges.append(
+                            RawEdge(
+                                kind="submits_to",
+                                src_kind="Form",
+                                src_key=form_key,
+                                dst_kind="Endpoint",
+                                dst_key=action_ep_key,
+                                properties={},
+                                source=ctx.source_label,
+                            )
+                        )
         return batch
 
 
