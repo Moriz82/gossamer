@@ -148,9 +148,10 @@ html, body {
 }
 
 .tab.active {
-  background: var(--c-surface2);
-  border-color: var(--c-border-h);
+  background: var(--c-surface3);
+  border-color: var(--c-silk-dim);
   color: var(--c-text);
+  border-bottom: 2px solid var(--c-silk);
 }
 
 .main-area {
@@ -932,4 +933,35 @@ button.ghost-inline:hover:not(:disabled) {
   display: inline-block; width: 14px; height: 14px;
   border-radius: 3px; vertical-align: middle;
   margin-right: var(--sp-1); border: 1px solid rgba(255,255,255,0.1);
+}
+
+/* Nav groups */
+.nav-groups {
+  display: flex;
+  gap: 24px;
+  flex: 1;
+}
+.nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.nav-group-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--c-text-muted);
+  padding-left: 4px;
+}
+.nav-group-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+/* Header status */
+.header-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
 }
