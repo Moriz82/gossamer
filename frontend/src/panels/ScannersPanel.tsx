@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch, apiJson } from "../api";
 
 type IngestorRow = { name: string; summary: string; hints: string; role: string };
@@ -12,6 +12,23 @@ type TemplateRow = {
   size_bytes: number;
 };
 
+type PluginRow = {
+  id: string;
+  name: string;
+  installed: boolean;
+  binary_found: boolean;
+};
+
+type ScanProgress = {
+  type: string;
+  phase?: string;
+  lines_processed?: number;
+  elapsed_seconds?: number;
+  detail?: string;
+  ok?: boolean;
+  ingested?: { nodes: number; edges: number };
+};
+
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
@@ -21,21 +38,32 @@ function formatBytes(n: number): string {
 export default function ScannersPanel() {
   const [ingestors, setIngestors] = useState<IngestorRow[] | null>(null);
   const [templates, setTemplates] = useState<TemplateRow[] | null>(null);
+  const [plugins, setPlugins] = useState<PluginRow[] | null>(null);
   const [selTpl, setSelTpl] = useState<Set<string>>(new Set());
   const [tplBusy, setTplBusy] = useState(false);
   const [tplMsg, setTplMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+
+  // Scanner run state
+  const [scanTargets, setScanTargets] = useState("");
+  const [scanPlugin, setScanPlugin] = useState("");
+  const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null);
+  const [scanBusy, setScanBusy] = useState(false);
+  const [scanMsg, setScanMsg] = useState<string | null>(null);
+  const scanAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     let ok = true;
     Promise.all([
       apiJson<IngestorRow[]>("/api/ingestors"),
       apiJson<TemplateRow[]>("/api/templates").catch(() => [] as TemplateRow[]),
+      apiJson<PluginRow[]>("/api/plugins").catch(() => [] as PluginRow[]),
     ])
-      .then(([rows, tpl]) => {
+      .then(([rows, tpl, plg]) => {
         if (ok) {
           setIngestors(rows);
           setTemplates(tpl);
+          setPlugins(plg);
         }
       })
       .catch((e) => {
@@ -69,6 +97,69 @@ export default function ScannersPanel() {
   }, [templates]);
 
   const clearTpl = useCallback(() => setSelTpl(new Set()), []);
+
+  async function runScan() {
+    if (!scanPlugin || !scanTargets.trim()) return;
+    setScanBusy(true);
+    setScanProgress(null);
+    setScanMsg(null);
+    const targets = scanTargets.split("\n").map((s) => s.trim()).filter(Boolean);
+    const ac = new AbortController();
+    scanAbortRef.current = ac;
+    try {
+      const r = await apiFetch(`/api/scanners/${scanPlugin}/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ targets }),
+        signal: ac.signal,
+      });
+      if (!r.ok) {
+        const t = await r.text();
+        throw new Error(t || r.statusText);
+      }
+      const reader = r.body?.getReader();
+      if (!reader) throw new Error("No response body");
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const parts = buf.split("\n\n");
+        buf = parts.pop() || "";
+        for (const part of parts) {
+          const line = part.replace(/^data: /, "").trim();
+          if (!line) continue;
+          try {
+            const evt = JSON.parse(line) as ScanProgress;
+            if (evt.type === "progress") {
+              setScanProgress(evt);
+            } else if (evt.type === "complete") {
+              setScanProgress(null);
+              if (evt.ok && evt.ingested) {
+                setScanMsg(`Scan complete: ${evt.ingested.nodes} nodes, ${evt.ingested.edges} edges ingested`);
+              } else if (evt.ok) {
+                setScanMsg("Scan complete (no results to ingest)");
+              } else {
+                setScanMsg(`Scan finished with issues: ${JSON.stringify(evt)}`);
+              }
+            } else if (evt.type === "error") {
+              setScanProgress(null);
+              setScanMsg(`Error: ${evt.detail}`);
+            }
+          } catch { /* skip malformed */ }
+        }
+      }
+    } catch (err) {
+      if ((err as Error).name !== "AbortError") {
+        setScanMsg(err instanceof Error ? err.message : String(err));
+      }
+      setScanProgress(null);
+    } finally {
+      setScanBusy(false);
+      scanAbortRef.current = null;
+    }
+  }
 
   const downloadTemplatesZip = useCallback(async (mode: "all" | "selected") => {
     setTplMsg(null);
@@ -210,6 +301,73 @@ export default function ScannersPanel() {
             </table>
           </div>
         )}
+      </div>
+
+      <div className="card">
+        <h2>Run Scanner</h2>
+        <p className="muted">
+          Execute an installed scanner against targets. Results auto-ingest into the graph.
+        </p>
+        <div className="form-grid">
+          <label>
+            Scanner
+            <select value={scanPlugin} onChange={(e) => setScanPlugin(e.target.value)}>
+              <option value="">Select scanner...</option>
+              {plugins
+                ?.filter((p) => p.installed && p.binary_found)
+                .map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+            </select>
+          </label>
+          <label className="full">
+            Targets (one per line)
+            <textarea
+              value={scanTargets}
+              onChange={(e) => setScanTargets(e.target.value)}
+              rows={4}
+              placeholder={"https://example.com\nhttps://target.com"}
+            />
+          </label>
+          <div className="form-actions">
+            <button
+              type="button"
+              className="primary"
+              onClick={() => void runScan()}
+              disabled={scanBusy || !scanPlugin || !scanTargets.trim()}
+            >
+              {scanBusy ? "Scanning..." : "Run scan"}
+            </button>
+            {scanBusy && (
+              <button
+                type="button"
+                className="danger"
+                onClick={() => {
+                  scanAbortRef.current?.abort();
+                  void apiFetch(`/api/scanners/${scanPlugin}/stop`, { method: "POST" });
+                }}
+              >
+                Stop
+              </button>
+            )}
+          </div>
+          {scanProgress && (
+            <div className="crawl-progress">
+              <div className="crawl-progress-stats">
+                <span>{scanProgress.phase}</span>
+                {scanProgress.lines_processed != null && (
+                  <span>{scanProgress.lines_processed} lines</span>
+                )}
+                {scanProgress.elapsed_seconds != null && (
+                  <span>{scanProgress.elapsed_seconds}s elapsed</span>
+                )}
+              </div>
+            </div>
+          )}
+          {scanMsg ? <pre className="panel-msg">{scanMsg}</pre> : null}
+        </div>
       </div>
     </div>
   );

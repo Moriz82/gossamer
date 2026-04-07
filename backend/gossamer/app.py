@@ -33,6 +33,7 @@ from gossamer.plugin_store import (
     uninstall_plugin,
     update_plugin,
 )
+from gossamer.scanner_runner import run_scanner, stop_scanner
 from gossamer.pipeline import ingest_and_store
 from gossamer.queries.builtins import *  # noqa: F401,F403 - register builtins
 from gossamer.queries.registry import all_queries, get_query
@@ -632,6 +633,72 @@ def api_plugin_update(plugin_id: str) -> dict[str, Any]:
 @api.delete("/plugins/{plugin_id}")
 def api_plugin_uninstall(plugin_id: str) -> dict[str, Any]:
     return uninstall_plugin(plugin_id)
+
+
+@api.post("/scanners/{plugin_id}/run")
+def api_scanner_run(
+    plugin_id: str,
+    body: dict[str, Any],
+    store: Annotated[GraphStore, Depends(get_store)],
+    settings: Annotated[Settings, Depends(get_effective_settings)],
+) -> StreamingResponse:
+    """SSE endpoint that streams scanner execution progress."""
+    import queue as _queue
+    import threading
+
+    targets = body.get("targets", [])
+    extra_args = body.get("extra_args", [])
+
+    progress_q: _queue.Queue[dict[str, Any]] = _queue.Queue()
+
+    def _run() -> None:
+        try:
+            result = run_scanner(
+                plugin_id,
+                targets,
+                progress_cb=lambda evt: progress_q.put(evt),
+                extra_args=extra_args,
+            )
+            # Auto-ingest if output file exists
+            if result.get("ok") and result.get("output_file"):
+                stats = ingest_and_store(
+                    store,
+                    Path(result["output_file"]),
+                    f"scan_{plugin_id}",
+                    result.get("ingestor"),
+                    settings,
+                )
+                result["ingested"] = stats
+                Path(result["output_file"]).unlink(missing_ok=True)
+            progress_q.put({"type": "complete", **result})
+        except Exception as exc:
+            progress_q.put({"type": "error", "detail": str(exc)})
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+
+    def event_stream():
+        while True:
+            try:
+                evt = progress_q.get(timeout=120)
+            except _queue.Empty:
+                yield 'data: {"type": "heartbeat"}\n\n'
+                continue
+            yield f"data: {json.dumps(evt)}\n\n"
+            if evt.get("type") in ("complete", "error"):
+                break
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@api.post("/scanners/{plugin_id}/stop")
+def api_scanner_stop(plugin_id: str) -> dict[str, Any]:
+    """Stop a running scanner."""
+    return stop_scanner(plugin_id)
 
 
 app.include_router(api)
