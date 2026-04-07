@@ -135,7 +135,27 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="app-header">
-        <div className="brand">Gossamer</div>
+        <div className="brand">
+          <svg className="brand-logo" viewBox="0 0 32 32" width="22" height="22">
+            <g stroke="currentColor" strokeWidth="0.8" opacity="0.7">
+              <line x1="16" y1="16" x2="16" y2="2"/>
+              <line x1="16" y1="16" x2="28" y2="6"/>
+              <line x1="16" y1="16" x2="30" y2="16"/>
+              <line x1="16" y1="16" x2="28" y2="26"/>
+              <line x1="16" y1="16" x2="16" y2="30"/>
+              <line x1="16" y1="16" x2="4" y2="26"/>
+              <line x1="16" y1="16" x2="2" y2="16"/>
+              <line x1="16" y1="16" x2="4" y2="6"/>
+            </g>
+            <g fill="none" stroke="currentColor" strokeWidth="0.5" opacity="0.5">
+              <circle cx="16" cy="16" r="4"/>
+              <circle cx="16" cy="16" r="8"/>
+              <circle cx="16" cy="16" r="12"/>
+            </g>
+            <circle cx="16" cy="16" r="1.5" fill="currentColor"/>
+          </svg>
+          Gossamer
+        </div>
         <nav className="tabs">
           {tabs.map((t) => (
             <button

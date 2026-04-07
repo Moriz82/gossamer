@@ -118,6 +118,20 @@ class CrawlIngestor(Ingestor):
                         continue
                 visited.add(canon)
                 logger.debug("Fetching %s (depth=%d)", canon, depth)
+
+                progress_cb = ctx.options.get("progress_callback")
+                if progress_cb:
+                    progress_cb({
+                        "type": "progress",
+                        "visited": len(visited),
+                        "queue_size": len(queue),
+                        "max_pages": max_pages,
+                        "depth": depth,
+                        "max_depth": max_depth,
+                        "current_url": canon,
+                        "nodes": len(batch.nodes),
+                        "edges": len(batch.edges),
+                    })
                 method = "GET"
                 ep_key = f"{method}|{canon}"
                 host_key = host

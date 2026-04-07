@@ -1,5 +1,18 @@
-import { FormEvent, useEffect, useState } from "react";
-import { apiFetch, apiJson } from "../api";
+import { FormEvent, useEffect, useRef, useState } from "react";
+import { apiFetch, apiJson, getAuthHeader } from "../api";
+
+type CrawlProgress = {
+  type: "progress" | "complete" | "error";
+  visited?: number;
+  queue_size?: number;
+  max_pages?: number;
+  depth?: number;
+  max_depth?: number;
+  current_url?: string;
+  nodes?: number;
+  edges?: number;
+  detail?: string;
+};
 
 export default function OperationsPanel() {
   const [ingestorNames, setIngestorNames] = useState<string[]>([]);
@@ -13,6 +26,8 @@ export default function OperationsPanel() {
   const [scopeHosts, setScopeHosts] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [crawlProgress, setCrawlProgress] = useState<CrawlProgress | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     apiJson<{ name: string }[]>("/api/ingestors")
@@ -72,28 +87,68 @@ export default function OperationsPanel() {
   async function runCrawl() {
     setBusy(true);
     setMsg(null);
-    const body: Record<string, unknown> = {
+    setCrawlProgress(null);
+    const reqBody: Record<string, unknown> = {
       seeds_file: crawlSeeds,
       source_label: crawlSource,
     };
-    if (maxDepth) body.max_depth = Number(maxDepth);
-    if (maxPages) body.max_pages = Number(maxPages);
+    if (maxDepth) reqBody.max_depth = Number(maxDepth);
+    if (maxPages) reqBody.max_pages = Number(maxPages);
     const lines = scopeHosts
       .split("\n")
       .map((s) => s.trim())
       .filter(Boolean);
-    if (lines.length) body.scope_hosts = lines;
+    if (lines.length) reqBody.scope_hosts = lines;
+
+    const ac = new AbortController();
+    abortRef.current = ac;
+
     try {
-      const j = await apiJson<Record<string, unknown>>("/api/ingest/crawl", {
+      const r = await apiFetch("/api/ingest/crawl/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify(reqBody),
+        signal: ac.signal,
       });
-      setMsg(`Crawl ingest: ${JSON.stringify(j)}`);
+      if (!r.ok) {
+        const t = await r.text();
+        throw new Error(t || r.statusText);
+      }
+      const reader = r.body?.getReader();
+      if (!reader) throw new Error("No response body");
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const parts = buf.split("\n\n");
+        buf = parts.pop() || "";
+        for (const part of parts) {
+          const line = part.replace(/^data: /, "").trim();
+          if (!line) continue;
+          try {
+            const evt = JSON.parse(line) as CrawlProgress;
+            if (evt.type === "progress") {
+              setCrawlProgress(evt);
+            } else if (evt.type === "complete") {
+              setCrawlProgress(null);
+              setMsg(`Crawl complete: ${evt.nodes} nodes, ${evt.edges} edges`);
+            } else if (evt.type === "error") {
+              setCrawlProgress(null);
+              setMsg(`Error: ${evt.detail}`);
+            }
+          } catch { /* skip malformed */ }
+        }
+      }
     } catch (err) {
-      setMsg(err instanceof Error ? err.message : String(err));
+      if ((err as Error).name !== "AbortError") {
+        setMsg(err instanceof Error ? err.message : String(err));
+      }
+      setCrawlProgress(null);
     } finally {
       setBusy(false);
+      abortRef.current = null;
     }
   }
 
@@ -195,9 +250,38 @@ export default function OperationsPanel() {
           </label>
           <div className="form-actions">
             <button type="button" onClick={() => void runCrawl()} disabled={busy || !crawlSeeds}>
-              Run crawl ingest
+              {busy && crawlProgress ? "Crawling..." : "Run crawl ingest"}
             </button>
+            {busy && abortRef.current && (
+              <button
+                type="button"
+                className="danger"
+                onClick={() => abortRef.current?.abort()}
+              >
+                Cancel
+              </button>
+            )}
           </div>
+          {crawlProgress && (
+            <div className="crawl-progress">
+              <div className="crawl-progress-bar-bg">
+                <div
+                  className="crawl-progress-bar"
+                  style={{ width: `${Math.min(100, ((crawlProgress.visited || 0) / (crawlProgress.max_pages || 100)) * 100)}%` }}
+                />
+              </div>
+              <div className="crawl-progress-stats">
+                <span>{crawlProgress.visited}/{crawlProgress.max_pages} pages</span>
+                <span>depth {crawlProgress.depth}/{crawlProgress.max_depth}</span>
+                <span>{crawlProgress.queue_size} queued</span>
+                <span>{crawlProgress.nodes} nodes</span>
+                <span>{crawlProgress.edges} edges</span>
+              </div>
+              <div className="crawl-progress-url" title={crawlProgress.current_url}>
+                {crawlProgress.current_url}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

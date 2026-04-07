@@ -67,11 +67,17 @@ body,
 }
 
 .brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-weight: 650;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   font-size: 13px;
   color: var(--c-accent);
+}
+.brand-logo {
+  flex-shrink: 0;
 }
 
 .tabs {
@@ -571,6 +577,45 @@ input[type="range"] {
   overflow: hidden; text-overflow: ellipsis; word-break: break-all;
 }
 .inspector-edge-endpoints { font-size: 12px; color: var(--c-text-dim); margin-top: var(--sp-2); }
+
+/* ── Crawl progress ── */
+.crawl-progress {
+  grid-column: 1 / -1;
+  margin-top: var(--sp-3);
+  padding: var(--sp-3);
+  background: var(--c-input-bg);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-md);
+}
+.crawl-progress-bar-bg {
+  height: 6px;
+  background: rgba(255,255,255,0.06);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: var(--sp-2);
+}
+.crawl-progress-bar {
+  height: 100%;
+  background: var(--c-accent);
+  border-radius: 3px;
+  transition: width 200ms ease;
+}
+.crawl-progress-stats {
+  display: flex;
+  gap: var(--sp-4);
+  font-size: 11px;
+  color: var(--c-text-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  margin-bottom: var(--sp-1);
+}
+.crawl-progress-url {
+  font-size: 11px;
+  color: var(--c-text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 /* ── Toast animation ── */
 @keyframes toast-in {

@@ -12,7 +12,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from gossamer.auth_deps import require_auth
@@ -291,6 +291,64 @@ def ingest_crawl(
         extra_options=extra,
     )
     return {"ok": True, **stats}
+
+
+@api.post("/ingest/crawl/stream")
+def ingest_crawl_stream(
+    body: CrawlOptions,
+    store: Annotated[SqliteGraphStore, Depends(get_store)],
+    settings: Annotated[Settings, Depends(get_effective_settings)],
+) -> StreamingResponse:
+    """SSE endpoint that streams crawl progress events."""
+    import queue as _queue
+    import threading
+
+    p = Path(body.seeds_file).expanduser()
+    if not p.is_file():
+        raise HTTPException(404, f"not a file: {p}")
+
+    progress_q: _queue.Queue[dict[str, Any]] = _queue.Queue()
+
+    extra: dict[str, Any] = {}
+    if body.max_depth is not None:
+        extra["max_depth"] = body.max_depth
+    if body.max_pages is not None:
+        extra["max_pages"] = body.max_pages
+    if body.scope_hosts is not None:
+        extra["scope_hosts"] = body.scope_hosts
+    if body.cookies is not None:
+        extra["cookies"] = body.cookies
+    extra["progress_callback"] = lambda evt: progress_q.put(evt)
+
+    def _run() -> None:
+        try:
+            stats = ingest_and_store(
+                store, p, body.source_label, "crawl_seed", settings,
+                extra_options=extra,
+            )
+            progress_q.put({"type": "complete", **stats})
+        except Exception as exc:
+            progress_q.put({"type": "error", "detail": str(exc)})
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+
+    def event_stream():
+        while True:
+            try:
+                evt = progress_q.get(timeout=120)
+            except _queue.Empty:
+                yield "data: {\"type\": \"heartbeat\"}\n\n"
+                continue
+            yield f"data: {json.dumps(evt)}\n\n"
+            if evt.get("type") in ("complete", "error"):
+                break
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @api.delete("/graph")
