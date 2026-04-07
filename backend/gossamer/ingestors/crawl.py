@@ -8,6 +8,7 @@ import httpx
 
 from gossamer.config import Settings, get_settings
 from gossamer.ingestors.base import Ingestor
+from gossamer.ingestors.fetch import fetch_url
 from gossamer.ingestors.registry import register_ingestor
 from gossamer.models import IngestContext, RawEdge, RawNode, RawObservationBatch
 from gossamer.scope import host_allowed
@@ -53,7 +54,7 @@ class CrawlIngestor(Ingestor):
         limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
         headers = {"User-Agent": settings.crawl_user_agent}
 
-        with httpx.Client(follow_redirects=True, timeout=timeout, limits=limits, headers=headers) as client:
+        with httpx.Client(follow_redirects=False, timeout=timeout, limits=limits, headers=headers) as client:
             while queue and len(visited) < max_pages:
                 url, depth = queue.pop(0)
                 p = urlparse(url)
@@ -69,14 +70,10 @@ class CrawlIngestor(Ingestor):
                 method = "GET"
                 ep_key = f"{method}|{canon}"
                 host_key = host
-                try:
-                    resp = client.get(canon)
-                    status = resp.status_code
-                    ctype = resp.headers.get("content-type", "")
-                except httpx.HTTPError:
-                    status = None
-                    ctype = ""
-                    resp = None
+
+                result = fetch_url(client, canon, max_retries=settings.crawl_max_retries)
+                status = result.status_code
+                ctype = result.content_type
 
                 batch.nodes.append(
                     RawNode(
@@ -120,16 +117,66 @@ class CrawlIngestor(Ingestor):
                     )
                 )
 
-                if resp is None or depth >= max_depth:
+                # Emit redirect chain: src[0] -> src[1] -> ... -> final_url
+                if result.redirect_chain:
+                    chain_urls = [u for u, _ in result.redirect_chain]
+                    chain_statuses = [s for _, s in result.redirect_chain]
+                    destinations = chain_urls[1:] + [result.url]
+                    for i, dest_url in enumerate(destinations):
+                        src_redirect_key = f"{method}|{chain_urls[i]}"
+                        dp = urlparse(dest_url)
+                        dh = (dp.hostname or "").lower()
+                        dest_redirect_key = f"{method}|{dest_url}"
+                        if dh:
+                            batch.nodes.append(
+                                RawNode(
+                                    kind="Host",
+                                    key=dh,
+                                    properties={"hostname": dh},
+                                    source=ctx.source_label,
+                                )
+                            )
+                            batch.nodes.append(
+                                RawNode(
+                                    kind="Endpoint",
+                                    key=dest_redirect_key,
+                                    properties={"url": dest_url, "method": method},
+                                    source=ctx.source_label,
+                                )
+                            )
+                            batch.edges.append(
+                                RawEdge(
+                                    kind="serves",
+                                    src_kind="Host",
+                                    src_key=dh,
+                                    dst_kind="Endpoint",
+                                    dst_key=dest_redirect_key,
+                                    properties={"scheme": dp.scheme},
+                                    source=ctx.source_label,
+                                )
+                            )
+                        batch.edges.append(
+                            RawEdge(
+                                kind="redirects_to",
+                                src_kind="Endpoint",
+                                src_key=src_redirect_key,
+                                dst_kind="Endpoint",
+                                dst_key=dest_redirect_key,
+                                properties={"status_code": chain_statuses[i]},
+                                source=ctx.source_label,
+                            )
+                        )
+
+                if result.error is not None or depth >= max_depth:
                     continue
-                if "text/html" not in ctype.lower() and resp.text and "<a " not in resp.text[:1000].lower():
+                body = result.body
+                if body is None:
                     continue
-                try:
-                    text = resp.text
-                except Exception:
+                if "text/html" not in ctype.lower() and "<a " not in body[:1000].lower():
                     continue
-                for m in _HREF_RE.findall(text):
-                    dest = urljoin(canon, m)
+                final_url = result.url
+                for m in _HREF_RE.findall(body):
+                    dest = urljoin(final_url, m)
                     dp = urlparse(dest)
                     dh = (dp.hostname or "").lower()
                     if not dh or not host_allowed(dh, scope):
