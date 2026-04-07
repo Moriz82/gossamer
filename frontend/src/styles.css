@@ -428,11 +428,43 @@ html, body {
   background: var(--c-surface);
 }
 
+.graph-canvas-wrap {
+  position: relative;
+}
+
 .graph-panel .cy {
   min-height: 360px;
   height: 100%;
   background: var(--c-bg);
   border-right: 1px solid var(--c-border);
+}
+
+/* Graph tooltip */
+.graph-tooltip {
+  position: absolute;
+  z-index: 20;
+  background: var(--c-surface2);
+  border: 1px solid var(--c-border-h);
+  border-radius: var(--r-md);
+  padding: 4px 10px;
+  font-size: 11px;
+  pointer-events: none;
+  transform: translate(-50%, -100%);
+  box-shadow: var(--sh-elevated);
+  max-width: 400px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.graph-tooltip-kind {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--c-text-muted);
+  margin-right: 6px;
+}
+.graph-tooltip-label {
+  color: var(--c-text);
 }
 
 .graph-inspector {
