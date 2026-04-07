@@ -12,6 +12,21 @@ type TemplateRow = {
   size_bytes: number;
 };
 
+type PluginInfo = {
+  id: string;
+  type: string;
+  name: string;
+  description: string;
+  latest_version: string;
+  installed_version: string | null;
+  installed: boolean;
+  binary_found: boolean;
+  binary_path: string | null;
+  source_repo: string;
+  updatable: boolean;
+  update_available: boolean;
+};
+
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
@@ -25,6 +40,47 @@ export default function ScannersPanel() {
   const [tplBusy, setTplBusy] = useState(false);
   const [tplMsg, setTplMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+
+  const [plugins, setPlugins] = useState<PluginInfo[] | null>(null);
+  const [pluginBusy, setPluginBusy] = useState<string | null>(null);
+  const [pluginMsg, setPluginMsg] = useState<string | null>(null);
+  const pluginMsgTimer = useCallback((msg: string) => {
+    setPluginMsg(msg);
+    const t = setTimeout(() => setPluginMsg(null), 3000);
+    return () => clearTimeout(t);
+  }, []);
+
+  useEffect(() => {
+    apiJson<PluginInfo[]>("/api/plugins").then(setPlugins).catch(() => {});
+  }, []);
+
+  async function pluginAction(
+    busyId: string,
+    action: () => Promise<unknown>,
+    successMsg: string,
+  ) {
+    setPluginBusy(busyId);
+    setPluginMsg(null);
+    try {
+      await action();
+      const list = await apiJson<PluginInfo[]>("/api/plugins");
+      setPlugins(list);
+      pluginMsgTimer(successMsg);
+    } catch (e) {
+      setPluginMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPluginBusy(null);
+    }
+  }
+
+  const refreshPlugins = () =>
+    pluginAction("__refresh__", () => Promise.resolve(), "Plugin list refreshed.");
+  const installPlugin = (id: string) =>
+    pluginAction(id, () => apiFetch(`/api/plugins/${id}/install`, { method: "POST" }), `${id} installed successfully.`);
+  const updatePlugin = (id: string) =>
+    pluginAction(id, () => apiFetch(`/api/plugins/${id}/update`, { method: "POST" }), `${id} updated successfully.`);
+  const uninstallPlugin = (id: string) =>
+    pluginAction(id, () => apiFetch(`/api/plugins/${id}`, { method: "DELETE" }), `${id} uninstalled.`);
 
   useEffect(() => {
     let ok = true;
@@ -107,6 +163,69 @@ export default function ScannersPanel() {
 
   return (
     <div className="panel-block">
+      <div className="card">
+        <div className="card-head">
+          <h2>Plugin Store</h2>
+          <button type="button" className="btn-secondary" onClick={() => void refreshPlugins()} disabled={!!pluginBusy}>
+            Check for updates
+          </button>
+        </div>
+        <p className="muted">
+          Install and manage scanner tools. Binaries are downloaded from official GitHub releases.
+        </p>
+        {pluginMsg && <div className="plugin-msg">{pluginMsg}</div>}
+        {plugins === null ? (
+          <p className="muted">Loading plugins...</p>
+        ) : plugins.length === 0 ? (
+          <p className="empty-hint">No plugins available.</p>
+        ) : (
+          <div className="plugin-grid">
+            {plugins.map((p) => (
+              <div key={p.id} className="plugin-card">
+                <div className="plugin-header">
+                  <span className={`status-dot ${p.binary_found ? "green" : p.installed ? "yellow" : p.update_available ? "blue" : "gray"}`} />
+                  <span className="plugin-name">{p.name}</span>
+                  <span className="badge">{p.type}</span>
+                </div>
+                <p className="plugin-desc">{p.description}</p>
+                <div className="plugin-meta">
+                  {p.installed_version && (
+                    <span className="plugin-version">v{p.installed_version}</span>
+                  )}
+                  {p.update_available && (
+                    <span className="plugin-update-badge">&rarr; v{p.latest_version}</span>
+                  )}
+                  {!p.installed && (
+                    <span className="plugin-version muted">v{p.latest_version}</span>
+                  )}
+                </div>
+                <div className="plugin-actions">
+                  {!p.installed ? (
+                    <button type="button" className="primary" disabled={pluginBusy === p.id}
+                      onClick={() => void installPlugin(p.id)}>
+                      {pluginBusy === p.id ? "Installing..." : "Install"}
+                    </button>
+                  ) : p.update_available ? (
+                    <button type="button" className="primary" disabled={pluginBusy === p.id}
+                      onClick={() => void updatePlugin(p.id)}>
+                      {pluginBusy === p.id ? "Updating..." : "Update"}
+                    </button>
+                  ) : (
+                    <span className="plugin-installed-badge">Installed</span>
+                  )}
+                  {p.installed && (
+                    <button type="button" className="ghost" disabled={pluginBusy === p.id}
+                      onClick={() => void uninstallPlugin(p.id)}>
+                      Uninstall
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       <div className="card">
         <h2>Example scanner templates</h2>
         <p className="muted">

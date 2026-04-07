@@ -1026,6 +1026,77 @@ button.ghost-inline:hover:not(:disabled) {
   background: rgba(0,0,0,0.15);
 }
 
+/* -- Plugin store grid -- */
+.plugin-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--sp-4);
+  margin-top: var(--sp-4);
+}
+.plugin-card {
+  background: var(--c-surface2);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-lg);
+  padding: var(--sp-4);
+  transition: border-color var(--tr-fast);
+}
+.plugin-card:hover {
+  border-color: var(--c-border-h);
+}
+.plugin-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-2);
+}
+.plugin-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--c-text);
+}
+.plugin-desc {
+  font-size: 12px;
+  color: var(--c-text-dim);
+  margin: 0 0 var(--sp-3);
+  line-height: 1.4;
+}
+.plugin-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+  font-size: 12px;
+}
+.plugin-version {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--c-text-dim);
+}
+.plugin-update-badge {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--c-info);
+  font-size: 11px;
+}
+.plugin-actions {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
+}
+.plugin-installed-badge {
+  font-size: 12px;
+  color: var(--c-low);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.plugin-msg {
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--c-surface2);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-md);
+  font-size: 13px;
+  margin-bottom: var(--sp-3);
+}
+
 /* -- Color swatch -- */
 .color-swatch {
   display: inline-block; width: 14px; height: 14px;
