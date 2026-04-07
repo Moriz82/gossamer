@@ -200,17 +200,19 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi }: Props) {
   return (
     <div className="graph-panel">
       <div className="graph-toolbar panel-toolbar">
-        <button type="button" onClick={() => void loadGraph()}>
-          Refresh graph
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            cyRef.current?.fit(undefined, 24);
-          }}
-        >
-          Fit
-        </button>
+        <div className="toolbar-group">
+          <button type="button" onClick={() => void loadGraph()}>
+            Refresh graph
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              cyRef.current?.fit(undefined, 24);
+            }}
+          >
+            Fit
+          </button>
+        </div>
         <label className="inline">
           Layout
           <select
@@ -224,81 +226,112 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi }: Props) {
             ))}
           </select>
         </label>
-        <label className="inline">
-          Node size
-          <input
-            type="range"
-            min={8}
-            max={48}
-            step={1}
-            value={ui.node_size}
-            onChange={(e) => onUiChange({ node_size: Number(e.target.value) })}
-          />
-        </label>
-        <label className="inline">
-          Font
-          <input
-            type="range"
-            min={6}
-            max={16}
-            step={1}
-            value={ui.font_size}
-            onChange={(e) => onUiChange({ font_size: Number(e.target.value) })}
-          />
-        </label>
-        <label className="inline">
-          Edge W
-          <input
-            type="range"
-            min={0.5}
-            max={4}
-            step={0.25}
-            value={ui.edge_width}
-            onChange={(e) => onUiChange({ edge_width: Number(e.target.value) })}
-          />
-        </label>
-        <label className="inline">
-          Edge α
-          <input
-            type="range"
-            min={0.2}
-            max={1}
-            step={0.05}
-            value={ui.edge_opacity}
-            onChange={(e) => onUiChange({ edge_opacity: Number(e.target.value) })}
-          />
-        </label>
-        <label className="inline">
-          Label len
-          <input
-            type="range"
-            min={12}
-            max={80}
-            step={1}
-            value={ui.label_max_len}
-            onChange={(e) => onUiChange({ label_max_len: Number(e.target.value) })}
-          />
-        </label>
-        <label className="inline">
-          Zoom wheel
-          <input
-            type="range"
-            min={0.05}
-            max={1}
-            step={0.05}
-            value={ui.wheel_sensitivity}
-            onChange={(e) => onUiChange({ wheel_sensitivity: Number(e.target.value) })}
-          />
-        </label>
+        <div className="toolbar-group">
+          <label className="inline">
+            Node size
+            <input
+              type="range"
+              min={8}
+              max={48}
+              step={1}
+              value={ui.node_size}
+              onChange={(e) => onUiChange({ node_size: Number(e.target.value) })}
+            />
+          </label>
+          <label className="inline">
+            Font
+            <input
+              type="range"
+              min={6}
+              max={16}
+              step={1}
+              value={ui.font_size}
+              onChange={(e) => onUiChange({ font_size: Number(e.target.value) })}
+            />
+          </label>
+          <label className="inline">
+            Edge W
+            <input
+              type="range"
+              min={0.5}
+              max={4}
+              step={0.25}
+              value={ui.edge_width}
+              onChange={(e) => onUiChange({ edge_width: Number(e.target.value) })}
+            />
+          </label>
+          <label className="inline">
+            Edge α
+            <input
+              type="range"
+              min={0.2}
+              max={1}
+              step={0.05}
+              value={ui.edge_opacity}
+              onChange={(e) => onUiChange({ edge_opacity: Number(e.target.value) })}
+            />
+          </label>
+        </div>
+        <div className="toolbar-group">
+          <label className="inline">
+            Label len
+            <input
+              type="range"
+              min={12}
+              max={80}
+              step={1}
+              value={ui.label_max_len}
+              onChange={(e) => onUiChange({ label_max_len: Number(e.target.value) })}
+            />
+          </label>
+          <label className="inline">
+            Zoom wheel
+            <input
+              type="range"
+              min={0.05}
+              max={1}
+              step={0.05}
+              value={ui.wheel_sensitivity}
+              onChange={(e) => onUiChange({ wheel_sensitivity: Number(e.target.value) })}
+            />
+          </label>
+        </div>
         <button type="button" className="primary" onClick={onPersistUi}>
           Save UI prefs
         </button>
-        <span className="muted">{status}</span>
+        <span className="toolbar-status">{status}</span>
       </div>
       <div ref={containerRef} className="cy" />
       <div className="graph-inspector">
         <h3>Selection</h3>
-        <pre>{selected ? JSON.stringify(selected, null, 2) : "Tap a node or edge"}</pre>
+        {!selected ? (
+          <p className="inspector-empty">Tap a node or edge</p>
+        ) : (
+          <>
+            <div className="inspector-header">
+              <span className="inspector-kind">{selected.kind}</span>
+            </div>
+            <div className="inspector-label">
+              {"label" in selected ? String((selected as { label: string }).label) : selected.kind}
+            </div>
+            <div className="inspector-id">{selected.id}</div>
+            {"source" in selected && (
+              <div className="inspector-edge-endpoints">
+                {(selected as { source: string; target: string }).source} &rarr; {(selected as { source: string; target: string }).target}
+              </div>
+            )}
+            {Object.keys(selected.properties).length > 0 && (
+              <div className="inspector-props">
+                {Object.entries(selected.properties).map(([k, v]) => (
+                  <div key={k} className="inspector-prop">
+                    <span className="inspector-prop-key">{k}</span>
+                    <span className="inspector-prop-val">{String(v)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
       </div>
     </div>
   );
