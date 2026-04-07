@@ -393,7 +393,7 @@ html, body {
 /* Graph 3-column layout */
 .graph-panel {
   display: grid;
-  grid-template-columns: 260px 1fr 300px;
+  grid-template-columns: 240px 1fr 280px;
   grid-template-rows: auto 1fr;
   flex: 1;
   min-height: 0;
@@ -1103,6 +1103,134 @@ button.ghost-inline:hover:not(:disabled) {
   display: inline-block; width: 14px; height: 14px;
   border-radius: 3px; vertical-align: middle;
   margin-right: var(--sp-1); border: 1px solid rgba(255,255,255,0.1);
+}
+
+/* -- Graph sidebar -- */
+.graph-sidebar {
+  background: var(--c-surface);
+  border-right: 1px solid var(--c-border);
+  overflow-y: auto;
+  padding-top: var(--sp-2);
+}
+
+.sidebar-section {
+  padding-bottom: var(--sp-3);
+  border-bottom: 1px solid var(--c-border);
+  margin-bottom: var(--sp-2);
+}
+.sidebar-section:last-child {
+  border-bottom: none;
+}
+
+.sidebar-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--c-text-muted);
+  padding: var(--sp-2) var(--sp-3);
+  font-weight: 600;
+}
+
+/* Sidebar search */
+.sidebar-search {
+  position: relative;
+  padding: 0 var(--sp-3);
+  margin-bottom: var(--sp-2);
+}
+.sidebar-search-input {
+  width: 100%;
+  padding: 8px 32px 8px 12px;
+  font-size: 12px;
+}
+.sidebar-search-clear {
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--c-text-muted);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+/* Search results */
+.sidebar-results {
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 0 var(--sp-2);
+}
+.sidebar-result {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  border: none;
+  background: transparent;
+  color: var(--c-text);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  font-size: 12px;
+}
+.sidebar-result:hover {
+  background: var(--c-surface3);
+}
+.sidebar-result-kind {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--c-text-muted);
+  flex-shrink: 0;
+}
+.sidebar-result-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Filter checkboxes */
+.sidebar-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px var(--sp-4);
+  cursor: pointer;
+  font-size: 13px;
+  transition: background var(--tr-fast);
+}
+.sidebar-filter:hover {
+  background: rgba(255,255,255,0.02);
+}
+.sidebar-filter-name {
+  flex: 1;
+}
+.sidebar-toggle-all {
+  font-size: 10px;
+  padding: 1px 6px;
+  border: 1px solid var(--c-border);
+  background: transparent;
+  color: var(--c-text-muted);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+
+/* Quick actions */
+.sidebar-actions {
+  padding: 0 var(--sp-3);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sidebar-actions button {
+  text-align: left;
+  padding: 6px 8px;
+  font-size: 12px;
 }
 
 /* Nav groups */

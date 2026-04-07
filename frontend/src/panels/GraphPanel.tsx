@@ -1,6 +1,8 @@
 import cytoscape, { type Core, type Stylesheet } from "cytoscape";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { apiFetch } from "../api";
+import { apiFetch, apiJson } from "../api";
+
+const DEFAULT_NODE_COLOR = "#888";
 
 type GraphNode = {
   id: string;
@@ -18,6 +20,15 @@ type GraphEdge = {
   color?: string;
   properties: Record<string, unknown>;
   sources: string[];
+};
+
+type SearchHit = { id: string; kind: string; label: string; color: string };
+
+type GraphStats = {
+  node_counts: Record<string, number>;
+  edge_counts: Record<string, number>;
+  total_nodes: number;
+  total_edges: number;
 };
 
 export type UIPrefs = {
@@ -58,6 +69,18 @@ function makeStylesheet(ui: UIPrefs): Stylesheet[] {
         opacity: ui.edge_opacity,
       },
     },
+    {
+      selector: ".dimmed",
+      style: { opacity: 0.12 },
+    },
+    {
+      selector: ".highlighted",
+      style: {
+        "border-width": 3,
+        "border-color": "#b8d4e8",
+        "border-opacity": 1,
+      },
+    },
   ];
 }
 
@@ -76,6 +99,11 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi }: Props) {
   const [selected, setSelected] = useState<GraphNode | GraphEdge | null>(null);
   const [status, setStatus] = useState<string>("");
   const [labelMode, setLabelMode] = useState<"smart" | "full" | "hidden" | "kind">("smart");
+  const [graphStats, setGraphStats] = useState<GraphStats | null>(null);
+  const [enabledKinds, setEnabledKinds] = useState<Set<string>>(new Set(["Host", "Endpoint", "Form"]));
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<SearchHit[]>([]);
+  const [typeColors, setTypeColors] = useState<Record<string, string>>({});
 
   const applyStyles = useCallback(() => {
     const cy = cyRef.current;
@@ -87,13 +115,31 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi }: Props) {
     }
   }, []);
 
+  useEffect(() => {
+    apiJson<GraphStats>("/api/graph/stats").then(setGraphStats).catch(() => {});
+    apiJson<{nodes: Record<string, {color?: string}>}>("/api/graph-type-registry")
+      .then(reg => {
+        const colors: Record<string, string> = {};
+        for (const [kind, hints] of Object.entries(reg.nodes)) {
+          colors[kind] = hints.color || DEFAULT_NODE_COLOR;
+        }
+        setTypeColors(colors);
+      }).catch(() => {});
+  }, []);
+
   const labelSkipRef = useRef(false);
 
   const loadGraph = useCallback(async () => {
     const cy = cyRef.current;
     if (!cy) return;
     const cur = uiRef.current;
-    const r = await apiFetch("/api/graph");
+
+    const params = new URLSearchParams();
+    if (enabledKinds.size > 0) {
+      params.set("kinds", Array.from(enabledKinds).join(","));
+    }
+
+    const r = await apiFetch(`/api/graph?${params}`);
     if (!r.ok) {
       setStatus("Failed to load graph");
       return;
@@ -103,7 +149,7 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi }: Props) {
       data: {
         id: n.id,
         label: `${n.kind}: ${String(n.label).slice(0, cur.label_max_len)}`,
-        bg: n.color || "#888",
+        bg: n.color || DEFAULT_NODE_COLOR,
         kind: n.kind,
         props: n.properties,
       },
@@ -122,13 +168,12 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi }: Props) {
     cy.layout({ name: cur.graph_layout as cytoscape.LayoutOptions["name"], animate: false }).run();
     cy.fit(undefined, 24);
     setStatus(`${data.nodes.length} nodes, ${data.edges.length} edges`);
-  }, []);
+  }, [enabledKinds]);
 
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
 
-    let cancelled = false;
     let cy: Core;
     try {
       cy = cytoscape({
@@ -169,15 +214,15 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi }: Props) {
       } as GraphEdge);
     });
 
-    loadGraph().finally(() => {
-      if (cancelled) return;
-    });
-
     return () => {
-      cancelled = true;
       cy.destroy();
       cyRef.current = null;
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    void loadGraph();
   }, [loadGraph]);
 
   useEffect(() => {
@@ -200,6 +245,33 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi }: Props) {
     }
     void loadGraph();
   }, [ui.label_max_len, loadGraph]);
+
+  useEffect(() => {
+    if (!searchQuery.trim()) {
+      setSearchResults([]);
+      cyRef.current?.elements().removeClass("dimmed highlighted");
+      return;
+    }
+    const cy = cyRef.current;
+    if (!cy) return;
+    const q = searchQuery.toLowerCase();
+    const matches: SearchHit[] = [];
+    cy.nodes().forEach(node => {
+      const data = node.data();
+      const label = String(data.label || "").toLowerCase();
+      const kind = String(data.kind || "").toLowerCase();
+      const id = String(data.id || "").toLowerCase();
+      if (label.includes(q) || kind.includes(q) || id.includes(q)) {
+        matches.push({id: data.id, kind: data.kind, label: data.label, color: data.bg || DEFAULT_NODE_COLOR});
+        node.addClass("highlighted");
+        node.removeClass("dimmed");
+      } else {
+        node.addClass("dimmed");
+        node.removeClass("highlighted");
+      }
+    });
+    setSearchResults(matches.slice(0, 50));
+  }, [searchQuery]);
 
   return (
     <div className="graph-panel">
@@ -320,10 +392,90 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi }: Props) {
       </div>
       <div className="graph-sidebar">
         <div className="sidebar-section">
-          <div className="sidebar-section-header">Filters</div>
-          <p className="sidebar-hint">
-            Node and edge type filters will appear here.
-          </p>
+          <div className="sidebar-section-header">Search</div>
+          <div className="sidebar-search">
+            <input
+              type="text"
+              placeholder="Search nodes..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="sidebar-search-input"
+            />
+            {searchQuery && (
+              <button type="button" className="sidebar-search-clear" onClick={() => setSearchQuery("")}>
+                &times;
+              </button>
+            )}
+          </div>
+          {searchResults.length > 0 && (
+            <div className="sidebar-results">
+              {searchResults.map((r) => (
+                <button
+                  key={r.id}
+                  type="button"
+                  className="sidebar-result"
+                  onClick={() => {
+                    const cy = cyRef.current;
+                    if (!cy) return;
+                    const node = cy.getElementById(r.id);
+                    if (node.length) {
+                      cy.animate({ center: { eles: node }, zoom: 2 }, { duration: 300 });
+                      node.select();
+                    }
+                  }}
+                >
+                  <span className="color-swatch" style={{ backgroundColor: r.color }} />
+                  <span className="sidebar-result-kind">{r.kind}</span>
+                  <span className="sidebar-result-label">{r.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="sidebar-section">
+          <div className="sidebar-section-header">
+            Node Types
+            <button type="button" className="sidebar-toggle-all" onClick={() => {
+              if (graphStats) {
+                const allKinds = Object.keys(graphStats.node_counts);
+                setEnabledKinds(prev => prev.size === allKinds.length ? new Set() : new Set(allKinds));
+              }
+            }}>
+              {enabledKinds.size === Object.keys(graphStats?.node_counts || {}).length ? "None" : "All"}
+            </button>
+          </div>
+          {graphStats && Object.entries(graphStats.node_counts).map(([kind, count]) => (
+            <label key={kind} className="sidebar-filter">
+              <input
+                type="checkbox"
+                checked={enabledKinds.has(kind)}
+                onChange={() => {
+                  setEnabledKinds(prev => {
+                    const next = new Set(prev);
+                    if (next.has(kind)) next.delete(kind);
+                    else next.add(kind);
+                    return next;
+                  });
+                }}
+              />
+              <span className="color-swatch" style={{ backgroundColor: typeColors[kind] || DEFAULT_NODE_COLOR }} />
+              <span className="sidebar-filter-name">{kind}</span>
+              <span className="badge">{count}</span>
+            </label>
+          ))}
+        </div>
+
+        <div className="sidebar-section">
+          <div className="sidebar-section-header">Quick Actions</div>
+          <div className="sidebar-actions">
+            <button type="button" className="ghost" onClick={() => {
+              setEnabledKinds(new Set(["Host"]));
+            }}>Load hosts only</button>
+            <button type="button" className="ghost" onClick={() => {
+              if (graphStats) setEnabledKinds(new Set(Object.keys(graphStats.node_counts)));
+            }}>Load full graph</button>
+          </div>
         </div>
       </div>
       <div ref={containerRef} className="cy" />
