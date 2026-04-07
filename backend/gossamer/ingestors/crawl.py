@@ -1,18 +1,16 @@
 from __future__ import annotations
 
-import re
 from pathlib import Path
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 
 import httpx
 
 from gossamer.config import Settings, get_settings
 from gossamer.ingestors.base import Ingestor
+from gossamer.ingestors.extractors import extract_all
 from gossamer.ingestors.registry import register_ingestor
 from gossamer.models import IngestContext, RawEdge, RawNode, RawObservationBatch
 from gossamer.scope import host_allowed
-
-_HREF_RE = re.compile(r'href=["\']([^"\']+)["\']', re.I)
 
 # Sentinel path: ingest expects a file; crawl uses a .url seed file (one URL per line)
 
@@ -122,20 +120,18 @@ class CrawlIngestor(Ingestor):
 
                 if resp is None or depth >= max_depth:
                     continue
-                if "text/html" not in ctype.lower() and resp.text and "<a " not in resp.text[:1000].lower():
-                    continue
                 try:
                     text = resp.text
                 except Exception:
                     continue
-                for m in _HREF_RE.findall(text):
-                    dest = urljoin(canon, m)
+                for link in extract_all(text, ctype, canon):
+                    dest = link.url
                     dp = urlparse(dest)
                     dh = (dp.hostname or "").lower()
                     if not dh or not host_allowed(dh, scope):
                         continue
                     dest_full = dest
-                    dest_method = "GET"
+                    dest_method = link.method
                     dest_key = f"{dest_method}|{dest_full}"
                     dh_key = dh
                     batch.nodes.append(
@@ -172,7 +168,7 @@ class CrawlIngestor(Ingestor):
                             src_key=ep_key,
                             dst_kind="Endpoint",
                             dst_key=dest_key,
-                            properties={"via": "href"},
+                            properties={"via": link.via, "context": link.context},
                             source=ctx.source_label,
                         )
                     )
