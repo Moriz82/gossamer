@@ -236,7 +236,7 @@ export default function App() {
       {toast ? <div className="toast">{toast}</div> : null}
       <main className="main-area panel-enter">
         {tab === "graph" ? (
-          <GraphPanel ui={ui} onUiChange={(p) => setUi((prev) => ({ ...prev, ...p }))} onPersistUi={onPersistUi} />
+          <GraphPanel ui={ui} onUiChange={(p) => setUi((prev) => ({ ...prev, ...p }))} onPersistUi={onPersistUi} backendType={backendType} />
         ) : null}
         {tab === "operations" ? <OperationsPanel /> : null}
         {tab === "settings" ? <SettingsPanel onRuntimeUpdated={() => void loadSettings()} /> : null}
