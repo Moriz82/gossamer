@@ -1,6 +1,6 @@
 import cytoscape, { type Core, type Stylesheet } from "cytoscape";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { apiFetch } from "../api";
+import { apiFetch, apiJson } from "../api";
 
 type GraphNode = {
   id: string;
@@ -58,6 +58,30 @@ function makeStylesheet(ui: UIPrefs): Stylesheet[] {
         opacity: ui.edge_opacity,
       },
     },
+    {
+      selector: ".dimmed",
+      style: {
+        opacity: 0.15,
+      },
+    },
+    {
+      selector: ".path-node",
+      style: {
+        "border-width": 3,
+        "border-color": "#b8d4e8",
+        "border-opacity": 1,
+        opacity: 1,
+      },
+    },
+    {
+      selector: ".path-edge",
+      style: {
+        width: 4,
+        "line-color": "#b8d4e8",
+        "target-arrow-color": "#b8d4e8",
+        opacity: 1,
+      },
+    },
   ];
 }
 
@@ -65,9 +89,10 @@ type Props = {
   ui: UIPrefs;
   onUiChange: (partial: Partial<UIPrefs>) => void;
   onPersistUi: () => void;
+  backendType?: string;
 };
 
-export default function GraphPanel({ ui, onUiChange, onPersistUi }: Props) {
+export default function GraphPanel({ ui, onUiChange, onPersistUi, backendType = "sqlite" }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
   const uiRef = useRef(ui);
@@ -75,6 +100,9 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi }: Props) {
 
   const [selected, setSelected] = useState<GraphNode | GraphEdge | null>(null);
   const [status, setStatus] = useState<string>("");
+  const [pathStart, setPathStart] = useState<{id: string; label: string} | null>(null);
+  const [pathEnd, setPathEnd] = useState<{id: string; label: string} | null>(null);
+  const [contextMenu, setContextMenu] = useState<{x: number; y: number; nodeId: string; nodeLabel: string} | null>(null);
 
   const applyStyles = useCallback(() => {
     const cy = cyRef.current;
@@ -165,6 +193,23 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi }: Props) {
       } as GraphEdge);
     });
 
+    cy.on("cxttap", "node", (evt) => {
+      const node = evt.target;
+      const data = node.data();
+      const rp = node.renderedPosition();
+      const container = containerRef.current;
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      setContextMenu({
+        x: rp.x + rect.left,
+        y: rp.y + rect.top,
+        nodeId: data.id,
+        nodeLabel: String(data.label || data.kind),
+      });
+    });
+
+    cy.on("tap", () => setContextMenu(null));
+
     loadGraph().finally(() => {
       if (cancelled) return;
     });
@@ -196,6 +241,105 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi }: Props) {
     }
     void loadGraph();
   }, [ui.label_max_len, loadGraph]);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setContextMenu(null);
+    };
+    const clickHandler = () => setContextMenu(null);
+    document.addEventListener("keydown", handler);
+    document.addEventListener("click", clickHandler);
+    return () => {
+      document.removeEventListener("keydown", handler);
+      document.removeEventListener("click", clickHandler);
+    };
+  }, []);
+
+  async function showNeighbors(nodeId: string) {
+    const cy = cyRef.current;
+    if (!cy) return;
+    try {
+      const data = await apiJson<{inbound: Record<string, any[]>; outbound: Record<string, any[]>}>(`/api/nodes/${encodeURIComponent(nodeId)}/neighbors?direction=both`);
+      let added = 0;
+      const allNodes: any[] = [];
+      const allEdges: any[] = [];
+
+      for (const [, neighbors] of [...Object.entries(data.inbound || {}), ...Object.entries(data.outbound || {})]) {
+        for (const n of neighbors) {
+          if (!cy.getElementById(n.id).length) {
+            allNodes.push({ data: { id: n.id, label: n.label || n.kind, bg: n.color || "#888", kind: n.kind, props: n.properties, size: 18 } });
+            added++;
+          }
+          if (n.edge_id && !cy.getElementById(n.edge_id).length) {
+            allEdges.push({ data: { id: n.edge_id, source: n.edge_source || nodeId, target: n.edge_target || n.id, ec: n.edge_color || "#666", kind: n.edge_kind || "" } });
+          }
+        }
+      }
+
+      if (allNodes.length || allEdges.length) {
+        cy.add([...allNodes, ...allEdges]);
+        const newEles = cy.collection(allNodes.map(n => cy.getElementById(n.data.id)));
+        if (newEles.length) {
+          newEles.layout({ name: "cose", animate: true, animationDuration: 300, fit: false }).run();
+        }
+      }
+      setStatus(`Added ${added} neighbors`);
+    } catch (e) {
+      setStatus(`Failed to load neighbors: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    setContextMenu(null);
+  }
+
+  async function findPath() {
+    if (!pathStart || !pathEnd) return;
+    const cy = cyRef.current;
+    if (!cy) return;
+    try {
+      const data = await apiJson<{nodes: any[]; edges: any[]}>("/api/graph/path", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ from_id: pathStart.id, to_id: pathEnd.id }),
+      });
+
+      if (!data.nodes.length) {
+        setStatus("No path found between these nodes");
+        return;
+      }
+
+      cy.elements().addClass("dimmed");
+
+      const pathNodeIds = new Set(data.nodes.map((n: any) => n.id));
+      const pathEdgeIds = new Set(data.edges.map((e: any) => e.id));
+
+      cy.nodes().forEach(node => {
+        if (pathNodeIds.has(node.id())) {
+          node.removeClass("dimmed").addClass("path-node");
+        }
+      });
+      cy.edges().forEach(edge => {
+        if (pathEdgeIds.has(edge.id())) {
+          edge.removeClass("dimmed").addClass("path-edge");
+        }
+      });
+
+      const pathEles = cy.elements(".path-node, .path-edge");
+      if (pathEles.length) {
+        cy.animate({ fit: { eles: pathEles, padding: 40 } }, { duration: 300 });
+      }
+
+      setStatus(`Path: ${data.nodes.length} nodes, ${data.edges.length} edges`);
+    } catch (e) {
+      setStatus(`Path query failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  function clearPath() {
+    const cy = cyRef.current;
+    if (!cy) return;
+    cy.elements().removeClass("dimmed path-node path-edge");
+    setPathStart(null);
+    setPathEnd(null);
+  }
 
   return (
     <div className="graph-panel">
@@ -302,7 +446,58 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi }: Props) {
         <span className="toolbar-status">{status}</span>
       </div>
       <div ref={containerRef} className="cy" />
+      {contextMenu && (
+        <div className="graph-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={(e) => e.stopPropagation()}>
+          <button type="button" onClick={() => { setPathStart({ id: contextMenu.nodeId, label: contextMenu.nodeLabel }); setContextMenu(null); }}>
+            Set as path start
+          </button>
+          <button type="button" onClick={() => { setPathEnd({ id: contextMenu.nodeId, label: contextMenu.nodeLabel }); setContextMenu(null); }}>
+            Set as path end
+          </button>
+          <button type="button" onClick={() => void showNeighbors(contextMenu.nodeId)}>
+            Show neighbors
+          </button>
+          <hr />
+          <button type="button" onClick={() => { cyRef.current?.getElementById(contextMenu.nodeId)?.style("display", "none"); setContextMenu(null); }}>
+            Hide node
+          </button>
+          <button type="button" onClick={() => { navigator.clipboard.writeText(contextMenu.nodeId); setContextMenu(null); }}>
+            Copy ID
+          </button>
+        </div>
+      )}
       <div className="graph-inspector">
+        <h3>Path Finder</h3>
+        {backendType === "sqlite" ? (
+          <p className="sidebar-hint">Path queries require Neo4j backend</p>
+        ) : (
+          <div className="path-finder">
+            <div className="path-node-display">
+              <span className="path-label">Start:</span>
+              {pathStart ? (
+                <span className="path-node-name">{pathStart.label}</span>
+              ) : (
+                <span className="path-node-placeholder">Right-click a node</span>
+              )}
+            </div>
+            <div className="path-node-display">
+              <span className="path-label">End:</span>
+              {pathEnd ? (
+                <span className="path-node-name">{pathEnd.label}</span>
+              ) : (
+                <span className="path-node-placeholder">Right-click a node</span>
+              )}
+            </div>
+            <div className="path-actions">
+              <button type="button" className="primary" onClick={() => void findPath()} disabled={!pathStart || !pathEnd}>
+                Find path
+              </button>
+              <button type="button" className="ghost" onClick={clearPath}>
+                Clear
+              </button>
+            </div>
+          </div>
+        )}
         <h3>Selection</h3>
         {!selected ? (
           <p className="inspector-empty">Tap a node or edge</p>
