@@ -26,6 +26,13 @@ from gossamer.graph_types.registry import graph_type_registry_payload
 from gossamer.ingestors.catalog import INGESTOR_INFO
 from gossamer.ingestors.registry import all_ingestors
 from gossamer.normalizers.registry import all_normalizer_defs
+from gossamer.plugin_store import (
+    check_status as plugin_check_status,
+    install_plugin,
+    list_plugins,
+    uninstall_plugin,
+    update_plugin,
+)
 from gossamer.pipeline import ingest_and_store
 from gossamer.queries.builtins import *  # noqa: F401,F403 - register builtins
 from gossamer.queries.registry import all_queries, get_query
@@ -577,6 +584,31 @@ def import_bundle(
     shutil.rmtree(tmp, ignore_errors=True)
     _STORE = create_graph_store(settings)
     return {"ok": True, "database": str(settings.database_path), "backend": "sqlite"}
+
+
+@api.get("/plugins")
+def api_plugins() -> list[dict[str, Any]]:
+    return list_plugins()
+
+
+@api.get("/plugins/{plugin_id}/status")
+def api_plugin_status(plugin_id: str) -> dict[str, Any]:
+    return plugin_check_status(plugin_id)
+
+
+@api.post("/plugins/{plugin_id}/install")
+def api_plugin_install(plugin_id: str) -> dict[str, Any]:
+    return install_plugin(plugin_id)
+
+
+@api.post("/plugins/{plugin_id}/update")
+def api_plugin_update(plugin_id: str) -> dict[str, Any]:
+    return update_plugin(plugin_id)
+
+
+@api.delete("/plugins/{plugin_id}")
+def api_plugin_uninstall(plugin_id: str) -> dict[str, Any]:
+    return uninstall_plugin(plugin_id)
 
 
 app.include_router(api)

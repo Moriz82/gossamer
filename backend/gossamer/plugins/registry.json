@@ -1,0 +1,113 @@
+{
+  "plugins": [
+    {
+      "id": "nuclei",
+      "type": "scanner",
+      "name": "Nuclei",
+      "description": "Fast and customizable vulnerability scanner by ProjectDiscovery",
+      "version": "3.3.7",
+      "source_repo": "projectdiscovery/nuclei",
+      "binary_name": "nuclei",
+      "install_method": "github_release",
+      "platforms": {
+        "darwin_arm64": "nuclei_3.3.7_macOS_arm64.zip",
+        "darwin_amd64": "nuclei_3.3.7_macOS_amd64.zip",
+        "linux_amd64": "nuclei_3.3.7_linux_amd64.zip",
+        "linux_arm64": "nuclei_3.3.7_linux_arm64.zip"
+      },
+      "ingestor": "nuclei_json",
+      "default_args": ["-jsonl", "-silent"],
+      "updatable": true
+    },
+    {
+      "id": "trivy",
+      "type": "scanner",
+      "name": "Trivy",
+      "description": "Comprehensive vulnerability scanner for containers, filesystems, and repos",
+      "version": "0.58.0",
+      "source_repo": "aquasecurity/trivy",
+      "binary_name": "trivy",
+      "install_method": "github_release",
+      "platforms": {
+        "darwin_arm64": "trivy_0.58.0_macOS-ARM64.tar.gz",
+        "darwin_amd64": "trivy_0.58.0_macOS-64bit.tar.gz",
+        "linux_amd64": "trivy_0.58.0_Linux-64bit.tar.gz",
+        "linux_arm64": "trivy_0.58.0_Linux-ARM64.tar.gz"
+      },
+      "ingestor": "trivy_json",
+      "default_args": ["fs", "--format", "json"],
+      "updatable": true
+    },
+    {
+      "id": "gitleaks",
+      "type": "scanner",
+      "name": "Gitleaks",
+      "description": "Secret scanning tool for git repositories",
+      "version": "8.21.2",
+      "source_repo": "gitleaks/gitleaks",
+      "binary_name": "gitleaks",
+      "install_method": "github_release",
+      "platforms": {
+        "darwin_arm64": "gitleaks_8.21.2_darwin_arm64.tar.gz",
+        "darwin_amd64": "gitleaks_8.21.2_darwin_amd64.tar.gz",
+        "linux_amd64": "gitleaks_8.21.2_linux_amd64.tar.gz",
+        "linux_arm64": "gitleaks_8.21.2_linux_arm64.tar.gz"
+      },
+      "ingestor": "gitleaks_json",
+      "default_args": ["detect", "--report-format", "json"],
+      "updatable": true
+    },
+    {
+      "id": "grype",
+      "type": "scanner",
+      "name": "Grype",
+      "description": "Vulnerability scanner for container images and filesystems",
+      "version": "0.84.0",
+      "source_repo": "anchore/grype",
+      "binary_name": "grype",
+      "install_method": "github_release",
+      "platforms": {
+        "darwin_arm64": "grype_0.84.0_darwin_arm64.tar.gz",
+        "darwin_amd64": "grype_0.84.0_darwin_amd64.tar.gz",
+        "linux_amd64": "grype_0.84.0_linux_amd64.tar.gz",
+        "linux_arm64": "grype_0.84.0_linux_arm64.tar.gz"
+      },
+      "ingestor": "grype_json",
+      "default_args": ["-o", "json"],
+      "updatable": true
+    },
+    {
+      "id": "trufflehog",
+      "type": "scanner",
+      "name": "TruffleHog",
+      "description": "Find leaked credentials in git repos, S3 buckets, and more",
+      "version": "3.82.13",
+      "source_repo": "trufflesecurity/trufflehog",
+      "binary_name": "trufflehog",
+      "install_method": "github_release",
+      "platforms": {
+        "darwin_arm64": "trufflehog_3.82.13_darwin_arm64.tar.gz",
+        "darwin_amd64": "trufflehog_3.82.13_darwin_amd64.tar.gz",
+        "linux_amd64": "trufflehog_3.82.13_linux_amd64.tar.gz",
+        "linux_arm64": "trufflehog_3.82.13_linux_arm64.tar.gz"
+      },
+      "ingestor": "trufflehog_json",
+      "default_args": ["--json"],
+      "updatable": true
+    },
+    {
+      "id": "semgrep",
+      "type": "scanner",
+      "name": "Semgrep",
+      "description": "Lightweight static analysis for many languages",
+      "version": "1.90.0",
+      "source_repo": "semgrep/semgrep",
+      "binary_name": "semgrep",
+      "install_method": "pip",
+      "platforms": {},
+      "ingestor": "semgrep_json",
+      "default_args": ["scan", "--json"],
+      "updatable": true
+    }
+  ]
+}
