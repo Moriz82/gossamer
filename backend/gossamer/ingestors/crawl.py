@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections import deque
 from pathlib import Path
 from urllib.parse import urlparse
@@ -24,6 +25,12 @@ logger = logging.getLogger(__name__)
 # Sentinel path: ingest expects a file; crawl uses a .url seed file (one URL per line)
 
 
+_SENSITIVE_PATHS = [
+    "/.git/", "/.git/config", "/.env", "/.svn/", "/wp-admin/",
+    "/phpmyadmin/", "/backup", "/.DS_Store", "/debug", "/phpinfo",
+]
+
+
 def _emit_crawl_audit_findings(
     batch: RawObservationBatch,
     *,
@@ -34,6 +41,8 @@ def _emit_crawl_audit_findings(
     content_type: str,
     source_key: str,
     source_label: str,
+    body: str | None = None,
+    redirect_location: str | None = None,
 ) -> None:
     """Passive checks: interesting status codes + baseline security headers on HTML."""
     from gossamer.ingestors.finding_helpers import emit_finding_on_target
@@ -76,10 +85,154 @@ def _emit_crawl_audit_findings(
                 edge_props={"check": "http_status"},
             )
 
+    lh = {k.lower(): v for k, v in headers.items()}
+
+    # --- Directory listing detection ---
+    if body:
+        body_lower = body.lower()
+        if "<title>index of" in body_lower or "<h1>index of" in body_lower:
+            emit_finding_on_target(
+                batch,
+                scanner="crawl_audit",
+                dedup_parts=("directory_listing", url),
+                target_uri=url,
+                method=method,
+                source_label=source_label,
+                source_key=source_key,
+                finding_props={
+                    "scanner": "crawl_audit",
+                    "name": "Directory listing enabled",
+                    "severity": "medium",
+                    "template_id": "directory_listing",
+                    "description": "Server exposes directory contents.",
+                },
+                edge_props={"check": "directory_listing"},
+            )
+
+    # --- Cookie security ---
+    set_cookie = lh.get("set-cookie", "")
+    if set_cookie:
+        issues: list[str] = []
+        sc_lower = set_cookie.lower()
+        if "secure" not in sc_lower:
+            issues.append("Secure")
+        if "httponly" not in sc_lower:
+            issues.append("HttpOnly")
+        if "samesite" not in sc_lower:
+            issues.append("SameSite")
+        if issues:
+            emit_finding_on_target(
+                batch,
+                scanner="crawl_audit",
+                dedup_parts=("insecure_cookie", url, ",".join(issues)),
+                target_uri=url,
+                method=method,
+                source_label=source_label,
+                source_key=source_key,
+                finding_props={
+                    "scanner": "crawl_audit",
+                    "name": f"Cookie missing: {', '.join(issues)}",
+                    "severity": "low",
+                    "template_id": "insecure_cookie",
+                    "description": f"Set-Cookie header is missing flags: {', '.join(issues)}.",
+                },
+                edge_props={"check": "insecure_cookie"},
+            )
+
+    # --- CORS wildcard ---
+    if lh.get("access-control-allow-origin") == "*":
+        emit_finding_on_target(
+            batch,
+            scanner="crawl_audit",
+            dedup_parts=("cors_wildcard", url),
+            target_uri=url,
+            method=method,
+            source_label=source_label,
+            source_key=source_key,
+            finding_props={
+                "scanner": "crawl_audit",
+                "name": "CORS allows all origins (*)",
+                "severity": "medium",
+                "template_id": "cors_wildcard",
+                "description": "Access-Control-Allow-Origin is set to wildcard (*).",
+            },
+            edge_props={"check": "cors_wildcard"},
+        )
+
+    # --- Server info disclosure ---
+    server = lh.get("server", "")
+    if server and re.search(r"\d+\.\d+", server):
+        emit_finding_on_target(
+            batch,
+            scanner="crawl_audit",
+            dedup_parts=("server_version_disclosure", url),
+            target_uri=url,
+            method=method,
+            source_label=source_label,
+            source_key=source_key,
+            finding_props={
+                "scanner": "crawl_audit",
+                "name": f"Server version disclosed: {server}",
+                "severity": "low",
+                "template_id": "server_version_disclosure",
+                "description": f"Server header reveals version info: {server}.",
+            },
+            edge_props={"check": "server_version_disclosure"},
+        )
+
+    # --- Sensitive paths ---
+    parsed_url = urlparse(url)
+    path = parsed_url.path.lower()
+    for sp in _SENSITIVE_PATHS:
+        if sp in path and status is not None and 200 <= status < 400:
+            emit_finding_on_target(
+                batch,
+                scanner="crawl_audit",
+                dedup_parts=("sensitive_path", url, sp),
+                target_uri=url,
+                method=method,
+                source_label=source_label,
+                source_key=source_key,
+                finding_props={
+                    "scanner": "crawl_audit",
+                    "name": f"Sensitive path accessible: {sp}",
+                    "severity": "high",
+                    "template_id": "sensitive_path",
+                    "description": f"Accessible sensitive path detected: {sp}.",
+                },
+                edge_props={"check": "sensitive_path"},
+            )
+            break
+
+    # --- Open redirect ---
+    if status is not None and 300 <= status < 400:
+        location = redirect_location or lh.get("location", "")
+        if location:
+            orig_host = parsed_url.hostname or ""
+            redir_host = urlparse(location).hostname or ""
+            if redir_host and redir_host != orig_host and not redir_host.endswith("." + orig_host):
+                emit_finding_on_target(
+                    batch,
+                    scanner="crawl_audit",
+                    dedup_parts=("open_redirect", url, redir_host),
+                    target_uri=url,
+                    method=method,
+                    source_label=source_label,
+                    source_key=source_key,
+                    finding_props={
+                        "scanner": "crawl_audit",
+                        "name": f"Redirect to external domain: {redir_host}",
+                        "severity": "medium",
+                        "template_id": "open_redirect",
+                        "description": f"Response redirects to external domain: {redir_host}.",
+                    },
+                    edge_props={"check": "open_redirect"},
+                )
+
+    # --- Missing security headers (HTML only) ---
     ct = (content_type or "").lower()
     if "text/html" not in ct:
         return
-    lh = {k.lower(): v for k, v in headers.items()}
     missing: list[str] = []
     if "x-content-type-options" not in lh:
         missing.append("X-Content-Type-Options")
@@ -283,6 +436,7 @@ class CrawlIngestor(Ingestor):
                         content_type=ctype or "",
                         source_key=source_key,
                         source_label=ctx.source_label,
+                        body=result.body,
                     )
 
                 # Emit redirect chain: src[0] -> src[1] -> ... -> final_url
