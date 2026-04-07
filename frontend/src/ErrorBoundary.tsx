@@ -19,11 +19,18 @@ export class ErrorBoundary extends Component<Props, State> {
     if (this.state.error) {
       return (
         <div className="error-boundary">
-          <h1>Something went wrong</h1>
-          <pre className="panel-msg">{this.state.error.message}</pre>
-          <button type="button" onClick={() => window.location.reload()}>
-            Reload page
-          </button>
+          <div className="error-card">
+            <h1>Thread broken</h1>
+            <p className="error-subtitle">Something went wrong in the application.</p>
+            <pre className="error-stack">{this.state.error.message}</pre>
+            <details className="error-details">
+              <summary>Stack trace</summary>
+              <pre className="error-stack-full">{this.state.error.stack}</pre>
+            </details>
+            <button type="button" className="primary" onClick={() => window.location.reload()}>
+              Reload
+            </button>
+          </div>
         </div>
       );
     }
