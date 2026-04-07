@@ -27,3 +27,4 @@ frontend/dist/
 **/burp-output/**
 **/zap-report/**
 **/engagement-*
+.claude/worktrees/
