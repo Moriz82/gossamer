@@ -1,0 +1,7 @@
+# Example only: SELECT-only queries. Copy and edit for your engagement; do not commit real data.
+name: endpoints_admin_in_path
+description: Endpoint keys containing 'admin' (string match on stored key)
+sql: |
+  SELECT id, kind, key, properties_json FROM nodes
+  WHERE kind = 'Endpoint' AND LOWER(key) LIKE '%admin%'
+  ORDER BY key LIMIT 500

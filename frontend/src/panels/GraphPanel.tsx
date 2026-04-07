@@ -1,0 +1,305 @@
+import cytoscape, { type Core, type Stylesheet } from "cytoscape";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { apiFetch } from "../api";
+
+type GraphNode = {
+  id: string;
+  kind: string;
+  label: string;
+  color?: string;
+  properties: Record<string, unknown>;
+};
+
+type GraphEdge = {
+  id: string;
+  kind: string;
+  source: string;
+  target: string;
+  color?: string;
+  properties: Record<string, unknown>;
+  sources: string[];
+};
+
+export type UIPrefs = {
+  graph_layout: string;
+  node_size: number;
+  font_size: number;
+  edge_opacity: number;
+  edge_width: number;
+  label_max_len: number;
+  wheel_sensitivity: number;
+};
+
+const LAYOUTS = ["cose", "breadthfirst", "circle", "grid", "concentric", "random"] as const;
+
+function makeStylesheet(ui: UIPrefs): Stylesheet[] {
+  return [
+    {
+      selector: "node",
+      style: {
+        label: "data(label)",
+        "font-size": ui.font_size,
+        color: "#e6e6e6",
+        "text-outline-width": 2,
+        "text-outline-color": "#111",
+        width: ui.node_size,
+        height: ui.node_size,
+        "background-color": "data(bg)",
+      },
+    },
+    {
+      selector: "edge",
+      style: {
+        width: ui.edge_width,
+        "line-color": "data(ec)",
+        "target-arrow-color": "data(ec)",
+        "target-arrow-shape": "triangle",
+        "curve-style": "bezier",
+        opacity: ui.edge_opacity,
+      },
+    },
+  ];
+}
+
+type Props = {
+  ui: UIPrefs;
+  onUiChange: (partial: Partial<UIPrefs>) => void;
+  onPersistUi: () => void;
+};
+
+export default function GraphPanel({ ui, onUiChange, onPersistUi }: Props) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const cyRef = useRef<Core | null>(null);
+  const uiRef = useRef(ui);
+  uiRef.current = ui;
+
+  const [selected, setSelected] = useState<GraphNode | GraphEdge | null>(null);
+  const [status, setStatus] = useState<string>("");
+
+  const applyStyles = useCallback(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    try {
+      cy.style().fromJson(makeStylesheet(uiRef.current) as unknown as cytoscape.StylesheetJson).update();
+    } catch {
+      /* ignore style refresh errors */
+    }
+  }, []);
+
+  const labelSkipRef = useRef(false);
+
+  const loadGraph = useCallback(async () => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    const cur = uiRef.current;
+    const r = await apiFetch("/api/graph");
+    if (!r.ok) {
+      setStatus("Failed to load graph");
+      return;
+    }
+    const data = (await r.json()) as { nodes: GraphNode[]; edges: GraphEdge[] };
+    const nodes = data.nodes.map((n) => ({
+      data: {
+        id: n.id,
+        label: `${n.kind}: ${String(n.label).slice(0, cur.label_max_len)}`,
+        bg: n.color || "#888",
+        kind: n.kind,
+        props: n.properties,
+      },
+    }));
+    const edges = data.edges.map((e) => ({
+      data: {
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        ec: e.color || "#666",
+        kind: e.kind,
+      },
+    }));
+    cy.elements().remove();
+    cy.add([...nodes, ...edges]);
+    cy.layout({ name: cur.graph_layout as cytoscape.LayoutOptions["name"], animate: false }).run();
+    cy.fit(undefined, 24);
+    setStatus(`${data.nodes.length} nodes, ${data.edges.length} edges`);
+  }, []);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    let cancelled = false;
+    let cy: Core;
+    try {
+      cy = cytoscape({
+        container: el,
+        elements: [],
+        style: makeStylesheet(uiRef.current),
+        layout: { name: uiRef.current.graph_layout, animate: false },
+        wheelSensitivity: uiRef.current.wheel_sensitivity,
+      });
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Failed to init graph");
+      return;
+    }
+    cyRef.current = cy;
+
+    cy.on("tap", "node", (evt) => {
+      const n = evt.target.data() as GraphNode & { bg?: string; props?: Record<string, unknown> };
+      setSelected({
+        id: String(n.id),
+        kind: String(n.kind),
+        label: String(n.label),
+        properties: n.props || {},
+      });
+    });
+    cy.on("tap", "edge", (evt) => {
+      const ed = evt.target.data();
+      setSelected({
+        id: String(ed.id),
+        kind: String(ed.kind),
+        label: String(ed.kind),
+        source: String(ed.source),
+        target: String(ed.target),
+        properties: {},
+        sources: [],
+      } as GraphEdge);
+    });
+
+    loadGraph().finally(() => {
+      if (cancelled) return;
+    });
+
+    return () => {
+      cancelled = true;
+      cy.destroy();
+      cyRef.current = null;
+    };
+  }, [loadGraph]);
+
+  useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    applyStyles();
+  }, [ui, applyStyles]);
+
+  useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy || cy.elements().length === 0) return;
+    cy.layout({ name: ui.graph_layout as cytoscape.LayoutOptions["name"], animate: false }).run();
+    cy.fit(undefined, 24);
+  }, [ui.graph_layout]);
+
+  useEffect(() => {
+    if (!labelSkipRef.current) {
+      labelSkipRef.current = true;
+      return;
+    }
+    void loadGraph();
+  }, [ui.label_max_len, loadGraph]);
+
+  return (
+    <div className="graph-panel">
+      <div className="graph-toolbar panel-toolbar">
+        <button type="button" onClick={() => void loadGraph()}>
+          Refresh graph
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            cyRef.current?.fit(undefined, 24);
+          }}
+        >
+          Fit
+        </button>
+        <label className="inline">
+          Layout
+          <select
+            value={ui.graph_layout}
+            onChange={(e) => onUiChange({ graph_layout: e.target.value })}
+          >
+            {LAYOUTS.map((l) => (
+              <option key={l} value={l}>
+                {l}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="inline">
+          Node size
+          <input
+            type="range"
+            min={8}
+            max={48}
+            step={1}
+            value={ui.node_size}
+            onChange={(e) => onUiChange({ node_size: Number(e.target.value) })}
+          />
+        </label>
+        <label className="inline">
+          Font
+          <input
+            type="range"
+            min={6}
+            max={16}
+            step={1}
+            value={ui.font_size}
+            onChange={(e) => onUiChange({ font_size: Number(e.target.value) })}
+          />
+        </label>
+        <label className="inline">
+          Edge W
+          <input
+            type="range"
+            min={0.5}
+            max={4}
+            step={0.25}
+            value={ui.edge_width}
+            onChange={(e) => onUiChange({ edge_width: Number(e.target.value) })}
+          />
+        </label>
+        <label className="inline">
+          Edge α
+          <input
+            type="range"
+            min={0.2}
+            max={1}
+            step={0.05}
+            value={ui.edge_opacity}
+            onChange={(e) => onUiChange({ edge_opacity: Number(e.target.value) })}
+          />
+        </label>
+        <label className="inline">
+          Label len
+          <input
+            type="range"
+            min={12}
+            max={80}
+            step={1}
+            value={ui.label_max_len}
+            onChange={(e) => onUiChange({ label_max_len: Number(e.target.value) })}
+          />
+        </label>
+        <label className="inline">
+          Zoom wheel
+          <input
+            type="range"
+            min={0.05}
+            max={1}
+            step={0.05}
+            value={ui.wheel_sensitivity}
+            onChange={(e) => onUiChange({ wheel_sensitivity: Number(e.target.value) })}
+          />
+        </label>
+        <button type="button" className="primary" onClick={onPersistUi}>
+          Save UI prefs
+        </button>
+        <span className="muted">{status}</span>
+      </div>
+      <div ref={containerRef} className="cy" />
+      <div className="graph-inspector">
+        <h3>Selection</h3>
+        <pre>{selected ? JSON.stringify(selected, null, 2) : "Tap a node or edge"}</pre>
+      </div>
+    </div>
+  );
+}

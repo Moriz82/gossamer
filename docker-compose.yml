@@ -1,0 +1,21 @@
+services:
+  gossamer-api:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      GOSSAMER_DATABASE_PATH: /data/graph.sqlite
+      GOSSAMER_UPLOADS_DIR: /data/uploads
+      GOSSAMER_EXPORTS_DIR: /data/exports
+    volumes:
+      - gossamer_data:/data
+
+  gossamer-web:
+    build: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - gossamer-api
+
+volumes:
+  gossamer_data:

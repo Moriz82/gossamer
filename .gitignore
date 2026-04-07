@@ -1,0 +1,29 @@
+# Local graph DB and uploads (may contain sensitive engagement data)
+*.db
+*.sqlite
+*.sqlite3
+data/
+uploads/
+exports/*.zip
+.env
+
+# Node / Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+dist/
+build/
+*.egg-info/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Real tool exports — never commit
+**/*.burp
+**/burp-output/**
+**/zap-report/**
+**/engagement-*
