@@ -20,6 +20,7 @@ def test_crawl_ingest_fetches_seed_and_internal_link(mock_client_cls, tmp_path: 
         r.status_code = status
         r.headers = {"content-type": ctype}
         r.text = text
+        r.is_redirect = False
         return r
 
     inst = MagicMock()

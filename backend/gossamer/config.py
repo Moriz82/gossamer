@@ -22,6 +22,7 @@ class Settings(BaseSettings):
             "strip_utm",
         ]
     )
+    crawl_max_retries: int = Field(default=2, ge=0, le=5)
     crawl_max_depth: int = Field(default=3, ge=1, le=20)
     crawl_max_pages: int = Field(default=100, ge=1, le=10000)
     crawl_timeout_seconds: float = Field(default=15.0)

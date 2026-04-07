@@ -4,6 +4,7 @@ from typing import Any
 
 from gossamer.graph_types.edges.discovered_by import DiscoveredByEdge
 from gossamer.graph_types.edges.links_to import LinksToEdge
+from gossamer.graph_types.edges.redirects_to import RedirectsToEdge
 from gossamer.graph_types.edges.serves import ServesEdge
 from gossamer.graph_types.nodes.endpoint import EndpointNode
 from gossamer.graph_types.nodes.host import HostNode
@@ -21,6 +22,7 @@ EDGE_TYPE_DEFS: dict[str, Any] = {
     ServesEdge.kind: ServesEdge(),
     DiscoveredByEdge.kind: DiscoveredByEdge(),
     LinksToEdge.kind: LinksToEdge(),
+    RedirectsToEdge.kind: RedirectsToEdge(),
 }
 
 
