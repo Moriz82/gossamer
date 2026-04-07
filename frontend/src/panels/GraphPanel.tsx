@@ -75,6 +75,7 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi }: Props) {
 
   const [selected, setSelected] = useState<GraphNode | GraphEdge | null>(null);
   const [status, setStatus] = useState<string>("");
+  const [labelMode, setLabelMode] = useState<"smart" | "full" | "hidden" | "kind">("smart");
 
   const applyStyles = useCallback(() => {
     const cy = cyRef.current;
@@ -136,6 +137,9 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi }: Props) {
         style: makeStylesheet(uiRef.current),
         layout: { name: uiRef.current.graph_layout, animate: false },
         wheelSensitivity: uiRef.current.wheel_sensitivity,
+        minZoom: 0.1,
+        maxZoom: 4,
+        boxSelectionEnabled: true,
       });
     } catch (e) {
       setStatus(e instanceof Error ? e.message : "Failed to init graph");
@@ -202,7 +206,7 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi }: Props) {
       <div className="graph-toolbar panel-toolbar">
         <div className="toolbar-group">
           <button type="button" onClick={() => void loadGraph()}>
-            Refresh graph
+            Refresh
           </button>
           <button
             type="button"
@@ -226,88 +230,109 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi }: Props) {
             ))}
           </select>
         </label>
-        <div className="toolbar-group">
-          <label className="inline">
-            Node size
-            <input
-              type="range"
-              min={8}
-              max={48}
-              step={1}
-              value={ui.node_size}
-              onChange={(e) => onUiChange({ node_size: Number(e.target.value) })}
-            />
-          </label>
-          <label className="inline">
-            Font
-            <input
-              type="range"
-              min={6}
-              max={16}
-              step={1}
-              value={ui.font_size}
-              onChange={(e) => onUiChange({ font_size: Number(e.target.value) })}
-            />
-          </label>
-          <label className="inline">
-            Edge W
-            <input
-              type="range"
-              min={0.5}
-              max={4}
-              step={0.25}
-              value={ui.edge_width}
-              onChange={(e) => onUiChange({ edge_width: Number(e.target.value) })}
-            />
-          </label>
-          <label className="inline">
-            Edge α
-            <input
-              type="range"
-              min={0.2}
-              max={1}
-              step={0.05}
-              value={ui.edge_opacity}
-              onChange={(e) => onUiChange({ edge_opacity: Number(e.target.value) })}
-            />
-          </label>
-        </div>
-        <div className="toolbar-group">
-          <label className="inline">
-            Label len
-            <input
-              type="range"
-              min={12}
-              max={80}
-              step={1}
-              value={ui.label_max_len}
-              onChange={(e) => onUiChange({ label_max_len: Number(e.target.value) })}
-            />
-          </label>
-          <label className="inline">
-            Zoom wheel
-            <input
-              type="range"
-              min={0.05}
-              max={1}
-              step={0.05}
-              value={ui.wheel_sensitivity}
-              onChange={(e) => onUiChange({ wheel_sensitivity: Number(e.target.value) })}
-            />
-          </label>
-        </div>
+        <label className="inline">
+          Label len
+          <input
+            type="range"
+            min={12}
+            max={80}
+            step={1}
+            value={ui.label_max_len}
+            onChange={(e) => onUiChange({ label_max_len: Number(e.target.value) })}
+          />
+        </label>
+        <label className="inline">
+          Zoom wheel
+          <input
+            type="range"
+            min={0.05}
+            max={1}
+            step={0.05}
+            value={ui.wheel_sensitivity}
+            onChange={(e) => onUiChange({ wheel_sensitivity: Number(e.target.value) })}
+          />
+        </label>
+        <label className="inline">
+          Labels
+          <select
+            value={labelMode}
+            onChange={(e) => setLabelMode(e.target.value as "smart" | "full" | "hidden" | "kind")}
+          >
+            <option value="smart">Smart</option>
+            <option value="full">Full</option>
+            <option value="hidden">Hidden</option>
+            <option value="kind">Kind only</option>
+          </select>
+        </label>
+        <details className="toolbar-details">
+          <summary>Display</summary>
+          <div className="toolbar-details-content">
+            <label className="inline">
+              Node size
+              <input
+                type="range"
+                min={8}
+                max={48}
+                step={1}
+                value={ui.node_size}
+                onChange={(e) => onUiChange({ node_size: Number(e.target.value) })}
+              />
+            </label>
+            <label className="inline">
+              Font
+              <input
+                type="range"
+                min={6}
+                max={16}
+                step={1}
+                value={ui.font_size}
+                onChange={(e) => onUiChange({ font_size: Number(e.target.value) })}
+              />
+            </label>
+            <label className="inline">
+              Edge W
+              <input
+                type="range"
+                min={0.5}
+                max={4}
+                step={0.25}
+                value={ui.edge_width}
+                onChange={(e) => onUiChange({ edge_width: Number(e.target.value) })}
+              />
+            </label>
+            <label className="inline">
+              Edge alpha
+              <input
+                type="range"
+                min={0.2}
+                max={1}
+                step={0.05}
+                value={ui.edge_opacity}
+                onChange={(e) => onUiChange({ edge_opacity: Number(e.target.value) })}
+              />
+            </label>
+          </div>
+        </details>
         <button type="button" className="primary" onClick={onPersistUi}>
           Save UI prefs
         </button>
         <span className="toolbar-status">{status}</span>
       </div>
+      <div className="graph-sidebar">
+        <div className="sidebar-section">
+          <div className="sidebar-section-header">Filters</div>
+          <p className="sidebar-hint">
+            Node and edge type filters will appear here.
+          </p>
+        </div>
+      </div>
       <div ref={containerRef} className="cy" />
       <div className="graph-inspector">
-        <h3>Selection</h3>
+        <h3 className="inspector-title">Inspector</h3>
         {!selected ? (
-          <p className="inspector-empty">Tap a node or edge</p>
+          <p className="inspector-empty inspector-body">Select a node or edge</p>
         ) : (
-          <>
+          <div className="inspector-body">
             <div className="inspector-header">
               <span className="inspector-kind">{selected.kind}</span>
             </div>
@@ -330,7 +355,7 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi }: Props) {
                 ))}
               </div>
             )}
-          </>
+          </div>
         )}
       </div>
     </div>
