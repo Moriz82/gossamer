@@ -66,7 +66,7 @@ export default function LoginGate({ onAuthed }: Props) {
             autoComplete="new-password"
           />
         </label>
-        {error ? <p className="login-error">{error}</p> : null}
+        {error ? <p className="login-error" role="alert">{error}</p> : null}
         <button type="submit" disabled={busy}>
           {busy ? "Checking…" : "Continue"}
         </button>
