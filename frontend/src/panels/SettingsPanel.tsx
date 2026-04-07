@@ -140,143 +140,151 @@ export default function SettingsPanel({ onRuntimeUpdated }: Props) {
 
   return (
     <div className="panel-block">
-      <h2>Environment-backed settings</h2>
-      <p className="muted">
-        Values come from <code>GOSSAMER_*</code> (process environment). Restart the API after changing env vars.
-        Password values are never shown; runtime overrides are stored under <code>data/config/runtime.json</code>{" "}
-        (see Credentials below).
-      </p>
-      {full ? (
-        <div className="settings-table-wrap">
-          <table className="settings-table">
-            <thead>
-              <tr>
-                <th>Variable field</th>
-                <th>Value</th>
-              </tr>
-            </thead>
-            <tbody>
-              {envRows.map(([k, v]) => (
-                <tr key={k}>
-                  <td>
-                    <code>{k}</code>
-                  </td>
-                  <td className="env-val">{formatEnvValue(v)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : null}
-
-      <h2>Paths</h2>
-      {full ? (
-        <div className="env-paths">
-          <div>
-            <strong>DB</strong> <code>{full.env_paths.database_path}</code>
-          </div>
-          <div>
-            <strong>Uploads</strong> <code>{full.env_paths.uploads_dir}</code>
-          </div>
-          <div>
-            <strong>Exports</strong> <code>{full.env_paths.exports_dir}</code>
-          </div>
-        </div>
-      ) : null}
-
-      <h2>Credentials (runtime override)</h2>
-      {full?.auth?.auth_disabled ? (
-        <p className="muted">HTTP Basic auth is disabled for this process.</p>
-      ) : (
-        <>
-          <p className="muted">
-            Effective login user: <strong>{full?.auth?.effective_username ?? "—"}</strong>
-            {full?.auth?.runtime_override_active ? " (runtime override active)" : " (from environment defaults)"}
-          </p>
-          <form
-            className="form-grid"
-            onSubmit={(e) => {
-              e.preventDefault();
-              void submitAuth(false);
-            }}
-          >
-            <label className="full">
-              Current password
-              <input type="password" value={curPw} onChange={(e) => setCurPw(e.target.value)} autoComplete="off" />
-            </label>
-            <label className="full">
-              New username (optional)
-              <input value={newUser} onChange={(e) => setNewUser(e.target.value)} autoComplete="off" />
-            </label>
-            <label className="full">
-              New password (optional)
-              <input type="password" value={newPw} onChange={(e) => setNewPw(e.target.value)} autoComplete="new-password" />
-            </label>
-            <div className="form-actions">
-              <button type="submit" className="primary">
-                Apply new credentials
-              </button>
-              <button type="button" className="danger" onClick={() => void submitAuth(true)}>
-                Revert to environment only
-              </button>
-            </div>
-          </form>
-          <p className="muted">
-            Revert clears the saved override so login uses <code>GOSSAMER_AUTH_USERNAME</code> /{" "}
-            <code>GOSSAMER_AUTH_PASSWORD</code> again.
-          </p>
-        </>
-      )}
-
-      {full?.notes?.map((n) => (
-        <p key={n} className="muted">
-          {n}
+      <div className="card">
+        <h2>Environment-backed settings</h2>
+        <p className="muted">
+          Values come from <code>GOSSAMER_*</code> (process environment). Restart the API after changing env vars.
+          Password values are never shown; runtime overrides are stored under <code>data/config/runtime.json</code>{" "}
+          (see Credentials below).
         </p>
-      ))}
+        {full ? (
+          <div className="settings-table-wrap">
+            <table className="settings-table">
+              <thead>
+                <tr>
+                  <th>Variable field</th>
+                  <th>Value</th>
+                </tr>
+              </thead>
+              <tbody>
+                {envRows.map(([k, v]) => (
+                  <tr key={k}>
+                    <td>
+                      <code>{k}</code>
+                    </td>
+                    <td className="env-val">{formatEnvValue(v)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
 
-      <h2>Pipeline (saved in runtime file)</h2>
-      <form onSubmit={savePipeline} className="form-grid">
-        <label className="full">
-          CORS origins (one per line)
-          <textarea value={corsText} onChange={(e) => setCorsText(e.target.value)} rows={3} />
-        </label>
-        <label className="full">
-          Default crawl scope hosts (one per line)
-          <textarea value={scopeText} onChange={(e) => setScopeText(e.target.value)} rows={3} />
-        </label>
-        <label className="full">
-          Normalizer order (one per line)
-          <textarea value={normText} onChange={(e) => setNormText(e.target.value)} rows={4} />
-        </label>
-        <label>
-          Crawl max depth
-          <input value={crawlDepth} onChange={(e) => setCrawlDepth(e.target.value)} />
-        </label>
-        <label>
-          Crawl max pages
-          <input value={crawlPages} onChange={(e) => setCrawlPages(e.target.value)} />
-        </label>
-        <label>
-          Crawl timeout (seconds)
-          <input value={crawlTimeout} onChange={(e) => setCrawlTimeout(e.target.value)} />
-        </label>
-        <label className="full">
-          Crawler user-agent
-          <input value={crawlUa} onChange={(e) => setCrawlUa(e.target.value)} />
-        </label>
-        <div className="form-actions">
-          <button type="submit">Save pipeline settings</button>
-          <button type="button" onClick={() => void refresh()}>
-            Reload
-          </button>
-        </div>
-      </form>
+        <h2>Paths</h2>
+        {full ? (
+          <div className="env-paths">
+            <div>
+              <strong>DB</strong> <code>{full.env_paths.database_path}</code>
+            </div>
+            <div>
+              <strong>Uploads</strong> <code>{full.env_paths.uploads_dir}</code>
+            </div>
+            <div>
+              <strong>Exports</strong> <code>{full.env_paths.exports_dir}</code>
+            </div>
+          </div>
+        ) : null}
+
+        {full?.notes?.map((n) => (
+          <p key={n} className="muted">
+            {n}
+          </p>
+        ))}
+      </div>
+
+      <div className="card">
+        <h2>Credentials (runtime override)</h2>
+        {full?.auth?.auth_disabled ? (
+          <p className="muted">HTTP Basic auth is disabled for this process.</p>
+        ) : (
+          <>
+            <p className="muted">
+              Effective login user: <strong>{full?.auth?.effective_username ?? "\u2014"}</strong>
+              {full?.auth?.runtime_override_active ? " (runtime override active)" : " (from environment defaults)"}
+            </p>
+            <form
+              className="form-grid"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void submitAuth(false);
+              }}
+            >
+              <label className="full">
+                Current password
+                <input type="password" value={curPw} onChange={(e) => setCurPw(e.target.value)} autoComplete="off" />
+              </label>
+              <label className="full">
+                New username (optional)
+                <input value={newUser} onChange={(e) => setNewUser(e.target.value)} autoComplete="off" />
+              </label>
+              <label className="full">
+                New password (optional)
+                <input type="password" value={newPw} onChange={(e) => setNewPw(e.target.value)} autoComplete="new-password" />
+              </label>
+              <div className="form-actions">
+                <button type="submit" className="primary">
+                  Apply new credentials
+                </button>
+                <button type="button" className="danger" onClick={() => void submitAuth(true)}>
+                  Revert to environment only
+                </button>
+              </div>
+            </form>
+            <p className="muted">
+              Revert clears the saved override so login uses <code>GOSSAMER_AUTH_USERNAME</code> /{" "}
+              <code>GOSSAMER_AUTH_PASSWORD</code> again.
+            </p>
+          </>
+        )}
+      </div>
+
+      <div className="card">
+        <h2>Pipeline (saved in runtime file)</h2>
+        <form onSubmit={savePipeline} className="form-grid">
+          <label className="full">
+            CORS origins (one per line)
+            <textarea value={corsText} onChange={(e) => setCorsText(e.target.value)} rows={3} />
+          </label>
+          <label className="full">
+            Default crawl scope hosts (one per line)
+            <textarea value={scopeText} onChange={(e) => setScopeText(e.target.value)} rows={3} />
+          </label>
+          <label className="full">
+            Normalizer order (one per line)
+            <textarea value={normText} onChange={(e) => setNormText(e.target.value)} rows={4} />
+          </label>
+          <label>
+            Crawl max depth
+            <input value={crawlDepth} onChange={(e) => setCrawlDepth(e.target.value)} />
+          </label>
+          <label>
+            Crawl max pages
+            <input value={crawlPages} onChange={(e) => setCrawlPages(e.target.value)} />
+          </label>
+          <label>
+            Crawl timeout (seconds)
+            <input value={crawlTimeout} onChange={(e) => setCrawlTimeout(e.target.value)} />
+          </label>
+          <label className="full">
+            Crawler user-agent
+            <input value={crawlUa} onChange={(e) => setCrawlUa(e.target.value)} />
+          </label>
+          <div className="form-actions">
+            <button type="submit">Save pipeline settings</button>
+            <button type="button" onClick={() => void refresh()}>
+              Reload
+            </button>
+          </div>
+        </form>
+      </div>
 
       {full ? (
-        <details className="raw-settings">
-          <summary>Runtime JSON snapshot (secrets masked)</summary>
-          <pre>{JSON.stringify(full.runtime, null, 2)}</pre>
-        </details>
+        <div className="card">
+          <details className="raw-settings">
+            <summary>Runtime JSON snapshot (secrets masked)</summary>
+            <pre>{JSON.stringify(full.runtime, null, 2)}</pre>
+          </details>
+        </div>
       ) : null}
 
       {msg ? <pre className="panel-msg">{msg}</pre> : null}

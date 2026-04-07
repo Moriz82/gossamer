@@ -34,25 +34,27 @@ export default function QueriesPanel() {
 
   return (
     <div className="panel-block">
-      <h2>Saved SQL queries</h2>
-      <p className="muted">Registered in the backend query registry. Results are JSON rows.</p>
-      <div className="query-row">
-        <select value={active} onChange={(e) => setActive(e.target.value)}>
-          {list.map((q) => (
-            <option key={q.name} value={q.name}>
-              {q.name}
-            </option>
-          ))}
-        </select>
-        <button type="button" onClick={() => void run()}>
-          Run
-        </button>
+      <div className="card">
+        <h2>Saved SQL queries</h2>
+        <p className="muted">Registered in the backend query registry. Results are JSON rows.</p>
+        <div className="query-row">
+          <select value={active} onChange={(e) => setActive(e.target.value)}>
+            {list.map((q) => (
+              <option key={q.name} value={q.name}>
+                {q.name}
+              </option>
+            ))}
+          </select>
+          <button type="button" onClick={() => void run()}>
+            Run
+          </button>
+        </div>
+        {list.find((q) => q.name === active)?.description ? (
+          <p className="muted">{list.find((q) => q.name === active)?.description}</p>
+        ) : null}
+        {rows != null ? <pre className="panel-msg tall">{JSON.stringify(rows, null, 2)}</pre> : null}
+        {msg ? <pre className="panel-msg">{msg}</pre> : null}
       </div>
-      {list.find((q) => q.name === active)?.description ? (
-        <p className="muted">{list.find((q) => q.name === active)?.description}</p>
-      ) : null}
-      {rows != null ? <pre className="panel-msg tall">{JSON.stringify(rows, null, 2)}</pre> : null}
-      {msg ? <pre className="panel-msg">{msg}</pre> : null}
     </div>
   );
 }
