@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     graph_snapshot_max_nodes: int = Field(default=8000, ge=100, le=500_000)
     graph_snapshot_max_edges: int = Field(default=16_000, ge=100, le=1_000_000)
     graph_path_max_hops: int = Field(default=25, ge=1, le=50)
+    plugin_dir: Path = Field(default=Path.home() / ".gossamer" / "plugins")
 
 
 def get_settings() -> Settings:
