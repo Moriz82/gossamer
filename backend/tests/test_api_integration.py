@@ -180,6 +180,72 @@ def test_import_export_roundtrip(isolated_client: "TestClient", tmp_path: Path) 
     assert len(after) == before
 
 
+def _ingest_sample(client: "TestClient", tmp_path: Path, url: str = "https://stats.test/page") -> None:
+    """Helper: ingest a single httpx_json record so the graph has Host + Endpoint nodes."""
+    sample = tmp_path / "sample.jsonl"
+    sample.write_text(
+        json.dumps({"url": url, "method": "GET", "status_code": 200}) + "\n",
+        encoding="utf-8",
+    )
+    client.post("/api/ingest/path", json={"path": str(sample), "ingestor_hint": "httpx_json"})
+
+
+def test_graph_stats_empty(isolated_client: "TestClient") -> None:
+    r = isolated_client.get("/api/graph/stats")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total_nodes"] == 0
+    assert body["total_edges"] == 0
+    assert body["node_counts"] == {}
+    assert body["edge_counts"] == {}
+
+
+def test_graph_stats_after_ingest(isolated_client: "TestClient", tmp_path: Path) -> None:
+    _ingest_sample(isolated_client, tmp_path)
+    r = isolated_client.get("/api/graph/stats")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total_nodes"] > 0
+    assert "Host" in body["node_counts"]
+    assert "Endpoint" in body["node_counts"]
+    assert body["total_edges"] > 0
+
+
+def test_graph_filter_by_kinds(isolated_client: "TestClient", tmp_path: Path) -> None:
+    _ingest_sample(isolated_client, tmp_path)
+    r = isolated_client.get("/api/graph?kinds=Host")
+    assert r.status_code == 200
+    snap = r.json()
+    assert len(snap["nodes"]) > 0
+    assert all(n["kind"] == "Host" for n in snap["nodes"])
+    # Edges should be empty since endpoints are excluded
+    # (edges only included when both endpoints are in the set)
+
+
+def test_graph_filter_exclude_kinds(isolated_client: "TestClient", tmp_path: Path) -> None:
+    _ingest_sample(isolated_client, tmp_path)
+    r = isolated_client.get("/api/graph?exclude_kinds=Endpoint,Source")
+    assert r.status_code == 200
+    snap = r.json()
+    for n in snap["nodes"]:
+        assert n["kind"] not in ("Endpoint", "Source")
+
+
+def test_graph_no_params_backward_compat(isolated_client: "TestClient", tmp_path: Path) -> None:
+    _ingest_sample(isolated_client, tmp_path)
+    r = isolated_client.get("/api/graph")
+    assert r.status_code == 200
+    snap = r.json()
+    kinds = {n["kind"] for n in snap["nodes"]}
+    # Full snapshot should contain at least Host and Endpoint
+    assert "Host" in kinds
+    assert "Endpoint" in kinds
+    # Enrichment should still be applied
+    for n in snap["nodes"]:
+        assert "color" in n
+        assert "label" in n
+
+
 def test_graph_snapshot_enriches_colors(isolated_client: "TestClient", tmp_path: Path) -> None:
     sample = tmp_path / "col.jsonl"
     sample.write_text(

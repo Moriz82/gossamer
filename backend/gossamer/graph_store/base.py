@@ -40,6 +40,19 @@ class GraphStore(ABC):
     def supports_path_queries(self) -> bool:
         return False
 
+    def get_graph_stats(self) -> dict[str, Any]:
+        """Return {node_counts: {Host: N, ...}, edge_counts: {...}, total_nodes, total_edges}"""
+        raise NotImplementedError
+
+    def get_filtered_snapshot(
+        self,
+        include_kinds: list[str] | None = None,
+        exclude_kinds: list[str] | None = None,
+        limit: int = 5000,
+    ) -> dict[str, Any]:
+        """Like get_graph_snapshot but with server-side kind filtering."""
+        raise NotImplementedError
+
     def list_findings(self, limit: int = 2000) -> list[dict[str, Any]]:
         nodes = self.get_graph_snapshot()["nodes"]
         return [n for n in nodes if n.get("kind") == "Finding"][:limit]

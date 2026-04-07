@@ -268,11 +268,11 @@ def api_findings(
     return {"findings": rows, "count": len(rows)}
 
 
-@api.get("/graph")
-def graph_snapshot(store: Annotated[GraphStore, Depends(get_store)]) -> dict[str, Any]:
-    snap = store.get_graph_snapshot()
-    reg = graph_type_registry_payload()["nodes"]
-    ereg = graph_type_registry_payload()["edges"]
+def _enrich_snapshot(snap: dict[str, Any]) -> dict[str, Any]:
+    """Add labels and colors from the type registry to a snapshot dict."""
+    registry = graph_type_registry_payload()
+    reg = registry["nodes"]
+    ereg = registry["edges"]
     for n in snap["nodes"]:
         hints = reg.get(n["kind"], {})
         props = n["properties"]
@@ -287,6 +287,29 @@ def graph_snapshot(store: Annotated[GraphStore, Depends(get_store)]) -> dict[str
         eh = ereg.get(e["kind"], {})
         e["color"] = eh.get("color", "#ccc")
     return snap
+
+
+@api.get("/graph/stats")
+def graph_stats(store: Annotated[GraphStore, Depends(get_store)]) -> dict[str, Any]:
+    return store.get_graph_stats()
+
+
+@api.get("/graph")
+def graph_snapshot(
+    store: Annotated[GraphStore, Depends(get_store)],
+    kinds: str | None = Query(default=None, description="Comma-separated node kinds to include"),
+    exclude_kinds: str | None = Query(default=None, description="Comma-separated node kinds to exclude"),
+    limit: int = Query(default=5000, ge=1, le=50000, description="Max nodes to return"),
+) -> dict[str, Any]:
+    include = [k.strip() for k in kinds.split(",") if k.strip()] if kinds else None
+    exclude = [k.strip() for k in exclude_kinds.split(",") if k.strip()] if exclude_kinds else None
+    if include or exclude or limit != 5000:
+        snap = store.get_filtered_snapshot(
+            include_kinds=include, exclude_kinds=exclude, limit=limit,
+        )
+    else:
+        snap = store.get_graph_snapshot()
+    return _enrich_snapshot(snap)
 
 
 @api.post("/ingest")

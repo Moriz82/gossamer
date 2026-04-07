@@ -156,6 +156,79 @@ class SqliteGraphStore(GraphStore):
         ]
         return {"nodes": nodes, "edges": edges}
 
+    def get_graph_stats(self) -> dict[str, Any]:
+        node_counts: dict[str, int] = {}
+        for r in self._conn.execute("SELECT kind, COUNT(*) AS c FROM nodes GROUP BY kind"):
+            node_counts[r["kind"]] = r["c"]
+        edge_counts: dict[str, int] = {}
+        for r in self._conn.execute("SELECT kind, COUNT(*) AS c FROM edges GROUP BY kind"):
+            edge_counts[r["kind"]] = r["c"]
+        return {
+            "node_counts": node_counts,
+            "edge_counts": edge_counts,
+            "total_nodes": sum(node_counts.values()),
+            "total_edges": sum(edge_counts.values()),
+        }
+
+    def get_filtered_snapshot(
+        self,
+        include_kinds: list[str] | None = None,
+        exclude_kinds: list[str] | None = None,
+        limit: int = 5000,
+    ) -> dict[str, Any]:
+        lim = max(1, min(int(limit), 50_000))
+
+        # Build node query with optional kind filter
+        node_clauses: list[str] = []
+        node_params: list[Any] = []
+        if include_kinds:
+            placeholders = ",".join("?" for _ in include_kinds)
+            node_clauses.append(f"kind IN ({placeholders})")
+            node_params.extend(include_kinds)
+        if exclude_kinds:
+            placeholders = ",".join("?" for _ in exclude_kinds)
+            node_clauses.append(f"kind NOT IN ({placeholders})")
+            node_params.extend(exclude_kinds)
+
+        where = f" WHERE {' AND '.join(node_clauses)}" if node_clauses else ""
+        node_sql = f"SELECT id, kind, key, properties_json FROM nodes{where} LIMIT ?"
+        node_params.append(lim)
+
+        nodes = [
+            {
+                "id": r["id"],
+                "kind": r["kind"],
+                "key": r["key"],
+                "properties": json.loads(r["properties_json"]),
+            }
+            for r in self._conn.execute(node_sql, node_params)
+        ]
+
+        # Only include edges where both endpoints are in the filtered node set
+        node_ids = {n["id"] for n in nodes}
+        if not node_ids:
+            return {"nodes": nodes, "edges": []}
+
+        # Use a subquery to restrict edges to the filtered node set
+        edge_sql = (
+            "SELECT id, kind, src_id, dst_id, properties_json, sources_json FROM edges "
+            f"WHERE src_id IN ({','.join('?' for _ in node_ids)}) "
+            f"AND dst_id IN ({','.join('?' for _ in node_ids)})"
+        )
+        edge_params = list(node_ids) + list(node_ids)
+        edges = [
+            {
+                "id": r["id"],
+                "kind": r["kind"],
+                "source": r["src_id"],
+                "target": r["dst_id"],
+                "properties": json.loads(r["properties_json"]),
+                "sources": json.loads(r["sources_json"]),
+            }
+            for r in self._conn.execute(edge_sql, edge_params)
+        ]
+        return {"nodes": nodes, "edges": edges}
+
     def clear(self) -> None:
         self._conn.execute("DELETE FROM edges")
         self._conn.execute("DELETE FROM nodes")

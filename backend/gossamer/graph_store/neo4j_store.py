@@ -214,6 +214,91 @@ class Neo4jGraphStore(GraphStore):
                 )
         return {"nodes": nodes, "edges": edges}
 
+    def get_graph_stats(self) -> dict[str, Any]:
+        node_counts: dict[str, int] = {}
+        edge_counts: dict[str, int] = {}
+        with self._driver.session(database=self._database) as session:
+            for row in session.run(
+                "MATCH (n) RETURN n.kind AS kind, count(*) AS c"
+            ):
+                kind = row["kind"] or "Unknown"
+                node_counts[kind] = row["c"]
+            for row in session.run(
+                "MATCH ()-[r]->() WHERE type(r) IN $rtypes "
+                "RETURN coalesce(r.edge_kind, toLower(type(r))) AS kind, count(*) AS c",
+                rtypes=_ALLOWED_REL_TYPES,
+            ):
+                kind = row["kind"] or "unknown"
+                edge_counts[kind] = row["c"]
+        return {
+            "node_counts": node_counts,
+            "edge_counts": edge_counts,
+            "total_nodes": sum(node_counts.values()),
+            "total_edges": sum(edge_counts.values()),
+        }
+
+    def get_filtered_snapshot(
+        self,
+        include_kinds: list[str] | None = None,
+        exclude_kinds: list[str] | None = None,
+        limit: int = 5000,
+    ) -> dict[str, Any]:
+        lim = max(1, min(int(limit), 50_000))
+        nodes: list[dict[str, Any]] = []
+        edges: list[dict[str, Any]] = []
+
+        # Build node filter clause
+        where_parts: list[str] = []
+        params: dict[str, Any] = {"lim": lim, "rtypes": _ALLOWED_REL_TYPES}
+        if include_kinds:
+            where_parts.append("n.kind IN $kinds")
+            params["kinds"] = include_kinds
+        if exclude_kinds:
+            where_parts.append("NOT n.kind IN $exclude")
+            params["exclude"] = exclude_kinds
+        node_where = f" WHERE {' AND '.join(where_parts)}" if where_parts else ""
+
+        with self._driver.session(database=self._database) as session:
+            for row in session.run(
+                f"MATCH (n){node_where} "
+                "RETURN n.id AS id, n.kind AS kind, n.key AS key, n.properties_json AS pj "
+                "LIMIT $lim",
+                **params,
+            ):
+                pj = row["pj"] or "{}"
+                nodes.append(
+                    {
+                        "id": row["id"],
+                        "kind": row["kind"],
+                        "key": row["key"],
+                        "properties": json.loads(pj),
+                    }
+                )
+            # Only fetch edges between filtered nodes
+            node_ids = [n["id"] for n in nodes]
+            if node_ids:
+                for row in session.run(
+                    "MATCH (a)-[r]->(b) "
+                    "WHERE type(r) IN $rtypes AND a.id IN $nids AND b.id IN $nids "
+                    "RETURN r.gid AS id, r.edge_kind AS kind, a.id AS src_id, b.id AS dst_id, "
+                    "       r.properties_json AS pj, r.sources_json AS sj",
+                    rtypes=_ALLOWED_REL_TYPES,
+                    nids=node_ids,
+                ):
+                    pj = row["pj"] or "{}"
+                    sj = row["sj"] or "[]"
+                    edges.append(
+                        {
+                            "id": row["id"],
+                            "kind": row["kind"],
+                            "source": row["src_id"],
+                            "target": row["dst_id"],
+                            "properties": json.loads(pj),
+                            "sources": json.loads(sj),
+                        }
+                    )
+        return {"nodes": nodes, "edges": edges}
+
     def clear(self) -> None:
         with self._driver.session(database=self._database) as session:
             session.run("MATCH (n) DETACH DELETE n")
