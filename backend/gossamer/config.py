@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     crawl_user_agent: str = Field(
         default="GossamerCrawler/0.1 (+authorized testing only)"
     )
+    crawl_respect_robots: bool = Field(default=True)
+    crawl_parse_sitemaps: bool = Field(default=True)
     auth_username: str = Field(default="gossamer")
     auth_password: str = Field(default="gossamer")
     auth_disabled: bool = Field(default=False)

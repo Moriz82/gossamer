@@ -8,6 +8,7 @@ import httpx
 
 from gossamer.config import Settings, get_settings
 from gossamer.ingestors.base import Ingestor
+from gossamer.ingestors.discovery import discover_from_robots, discover_from_sitemap
 from gossamer.ingestors.fetch import fetch_url
 from gossamer.ingestors.registry import register_ingestor
 from gossamer.models import IngestContext, RawEdge, RawNode, RawObservationBatch
@@ -54,7 +55,36 @@ class CrawlIngestor(Ingestor):
         limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
         headers = {"User-Agent": settings.crawl_user_agent}
 
+        disallowed: set[str] = set()
+
         with httpx.Client(follow_redirects=False, timeout=timeout, limits=limits, headers=headers) as client:
+            # Pre-discovery phase: robots.txt + sitemap.xml
+            if settings.crawl_parse_sitemaps or settings.crawl_respect_robots:
+                seen_hosts: set[str] = set()
+                for seed_url in seeds:
+                    sp = urlparse(seed_url)
+                    seed_host = (sp.hostname or "").lower()
+                    if seed_host in seen_hosts:
+                        continue
+                    seen_hosts.add(seed_host)
+                    base = f"{sp.scheme}://{seed_host}"
+                    robots = discover_from_robots(client, base)
+                    if settings.crawl_respect_robots:
+                        disallowed.update(robots.disallowed_paths)
+                    if settings.crawl_parse_sitemaps:
+                        sm_sources = robots.sitemap_urls
+                        if not sm_sources:
+                            sm_sources = [f"{base}/sitemap.xml"]
+                        for sm_url in sm_sources:
+                            sm_urls = discover_from_sitemap(
+                                client, sm_url, max_urls=max_pages - len(queue)
+                            )
+                            for u in sm_urls:
+                                up = urlparse(u)
+                                uh = (up.hostname or "").lower()
+                                if host_allowed(uh, scope):
+                                    queue.append((u, 1))
+
             while queue and len(visited) < max_pages:
                 url, depth = queue.pop(0)
                 p = urlparse(url)
@@ -66,6 +96,9 @@ class CrawlIngestor(Ingestor):
                     canon += f"?{p.query}"
                 if canon in visited:
                     continue
+                if disallowed:
+                    if any((p.path or "/").startswith(d) for d in disallowed):
+                        continue
                 visited.add(canon)
                 method = "GET"
                 ep_key = f"{method}|{canon}"
