@@ -90,6 +90,7 @@ class CrawlOptions(BaseModel):
     max_depth: int | None = None
     max_pages: int | None = None
     scope_hosts: list[str] | None = None
+    cookies: dict[str, str] | None = None
 
 
 class SettingsPatchBody(BaseModel):
@@ -279,6 +280,8 @@ def ingest_crawl(
         extra["max_pages"] = body.max_pages
     if body.scope_hosts is not None:
         extra["scope_hosts"] = body.scope_hosts
+    if body.cookies is not None:
+        extra["cookies"] = body.cookies
     stats = ingest_and_store(
         store,
         p,

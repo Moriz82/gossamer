@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     auth_username: str = Field(default="gossamer")
     auth_password: str = Field(default="gossamer")
     auth_disabled: bool = Field(default=False)
+    crawl_persist_cookies: bool = Field(default=True)
 
 
 def get_settings() -> Settings:
