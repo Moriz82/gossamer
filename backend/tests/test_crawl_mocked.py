@@ -27,6 +27,8 @@ def test_crawl_ingest_fetches_seed_and_internal_link(mock_client_cls, tmp_path: 
     inst.__exit__ = MagicMock(return_value=False)
     inst.get = MagicMock(
         side_effect=[
+            make_resp(404, "text/plain", ""),       # robots.txt
+            make_resp(404, "text/plain", ""),       # default sitemap.xml
             make_resp(200, "text/html", html),
             make_resp(200, "text/html", "<html></html>"),
         ]
