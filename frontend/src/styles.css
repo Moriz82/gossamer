@@ -1466,3 +1466,17 @@ button.ghost-inline:hover:not(:disabled) {
   100% { background-position: 200px 0; }
 }
 .plugin-card.installing { background: linear-gradient(90deg, var(--bg-card) 25%, var(--bg-alt, #2a2a2a) 50%, var(--bg-card) 75%); background-size: 400px 100%; animation: shimmer 1.5s infinite; }
+
+/* --- Query-Driven Graph Sidebar --- */
+.sidebar-tabs { display: flex; border-bottom: 1px solid var(--border); padding: 0; }
+.sidebar-tab { flex: 1; padding: 6px 0; background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--fg-dim, #999); cursor: pointer; font-size: 0.82rem; font-weight: 500; text-align: center; }
+.sidebar-tab.active { border-bottom-color: var(--accent); color: var(--fg); }
+.sidebar-tab:hover { color: var(--fg); }
+.sidebar-tab-content { padding: 8px 0; overflow-y: auto; flex: 1; }
+.sidebar-query-list { display: flex; flex-direction: column; gap: 2px; padding: 4px 0; }
+.sidebar-query-btn { display: flex; flex-direction: column; text-align: left; padding: 6px 10px; background: transparent; border: 1px solid transparent; border-radius: 4px; cursor: pointer; color: var(--fg); gap: 2px; }
+.sidebar-query-btn:hover { background: var(--bg-alt, #1e1e1e); border-color: var(--border); }
+.sidebar-query-btn.active { background: var(--bg-alt, #1e1e1e); border-color: var(--accent); }
+.sidebar-query-name { font-size: 0.82rem; font-weight: 500; text-transform: capitalize; }
+.sidebar-query-desc { font-size: 0.72rem; color: var(--fg-dim, #999); }
+.graph-empty-state { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; color: var(--fg-dim, #666); font-size: 1.1rem; }
