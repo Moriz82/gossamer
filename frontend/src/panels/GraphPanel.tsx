@@ -4,6 +4,23 @@ import { apiFetch, apiJson } from "../api";
 
 const DEFAULT_NODE_COLOR = "#888";
 
+function nodeIconSvg(letter: string): string {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><text x="12" y="17" text-anchor="middle" font-size="15" font-weight="700" font-family="sans-serif" fill="rgba(0,0,0,0.7)">${letter}</text></svg>`;
+  return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+}
+
+const NODE_ICON_SVGS: Record<string, string> = {
+  Host: nodeIconSvg("H"),
+  Endpoint: nodeIconSvg("E"),
+  Finding: nodeIconSvg("!"),
+  Form: nodeIconSvg("F"),
+  Source: nodeIconSvg("S"),
+};
+
+// Edges where the visual arrow should be reversed for clarity
+// (e.g. discovered_by goes Endpoint→Source but visually Source discovers Endpoint)
+const REVERSE_EDGE_DISPLAY = new Set(["discovered_by"]);
+
 type GraphNode = {
   id: string;
   kind: string;
@@ -120,6 +137,15 @@ function makeStylesheet(ui: UIPrefs): any[] {
         width: "data(size)",
         height: "data(size)",
         "background-color": "data(bg)",
+        "text-halign": "center",
+        "text-valign": "bottom",
+        "text-margin-y": 6,
+        "text-wrap": "ellipsis",
+        "text-max-width": "100px",
+        "background-image": "data(iconSvg)",
+        "background-width": "60%",
+        "background-height": "60%",
+        "background-clip": "none",
       },
     },
     {
@@ -297,6 +323,33 @@ export default function GraphPanel({ ui, onUiChange, backendType = "sqlite" }: P
 
   const labelSkipRef = useRef(false);
 
+  const mapGraphData = useCallback((data: { nodes: GraphNode[]; edges: GraphEdge[] }, cur: UIPrefs) => {
+    const cyNodes = data.nodes.map((n) => ({
+      data: {
+        id: n.id,
+        label: smartLabel(n.kind, n.properties, labelModeRef.current, cur.label_max_len),
+        bg: n.color || DEFAULT_NODE_COLOR,
+        kind: n.kind,
+        props: n.properties,
+        size: n.kind === "Host" ? cur.node_size * 1.4 : n.kind === "Source" ? cur.node_size * 0.7 : cur.node_size,
+        iconSvg: NODE_ICON_SVGS[n.kind] || NODE_ICON_SVGS.Source,
+      },
+    }));
+    const cyEdges = data.edges.map((e) => {
+      const reversed = REVERSE_EDGE_DISPLAY.has(e.kind);
+      return {
+        data: {
+          id: e.id,
+          source: reversed ? e.target : e.source,
+          target: reversed ? e.source : e.target,
+          ec: e.color || "#666",
+          kind: e.kind,
+        },
+      };
+    });
+    return { cyNodes, cyEdges };
+  }, []);
+
   const loadGraph = useCallback(async () => {
     const cy = cyRef.current;
     if (!cy) return;
@@ -313,27 +366,9 @@ export default function GraphPanel({ ui, onUiChange, backendType = "sqlite" }: P
       return;
     }
     const data = (await r.json()) as { nodes: GraphNode[]; edges: GraphEdge[] };
-    const nodes = data.nodes.map((n) => ({
-      data: {
-        id: n.id,
-        label: smartLabel(n.kind, n.properties, labelModeRef.current, cur.label_max_len),
-        bg: n.color || DEFAULT_NODE_COLOR,
-        kind: n.kind,
-        props: n.properties,
-        size: n.kind === "Host" ? cur.node_size * 1.4 : n.kind === "Source" ? cur.node_size * 0.7 : cur.node_size,
-      },
-    }));
-    const edges = data.edges.map((e) => ({
-      data: {
-        id: e.id,
-        source: e.source,
-        target: e.target,
-        ec: e.color || "#666",
-        kind: e.kind,
-      },
-    }));
+    const { cyNodes, cyEdges } = mapGraphData(data, cur);
     cy.elements().remove();
-    cy.add([...nodes, ...edges]);
+    cy.add([...cyNodes, ...cyEdges]);
     cy.layout(layoutOpts(cur.graph_layout) as cytoscape.LayoutOptions).run();
     cy.fit(undefined, 24);
     setStatus(`${data.nodes.length} nodes, ${data.edges.length} edges`);
@@ -350,27 +385,9 @@ export default function GraphPanel({ ui, onUiChange, backendType = "sqlite" }: P
         method: "POST",
       });
       const cur = uiRef.current;
-      const nodes = data.nodes.map((n) => ({
-        data: {
-          id: n.id,
-          label: smartLabel(n.kind, n.properties, labelModeRef.current, cur.label_max_len),
-          bg: n.color || DEFAULT_NODE_COLOR,
-          kind: n.kind,
-          props: n.properties,
-          size: n.kind === "Host" ? cur.node_size * 1.4 : n.kind === "Source" ? cur.node_size * 0.7 : cur.node_size,
-        },
-      }));
-      const edges = data.edges.map((e) => ({
-        data: {
-          id: e.id,
-          source: e.source,
-          target: e.target,
-          ec: e.color || "#666",
-          kind: e.kind,
-        },
-      }));
+      const { cyNodes, cyEdges } = mapGraphData(data, cur);
       cy.elements().remove();
-      cy.add([...nodes, ...edges]);
+      cy.add([...cyNodes, ...cyEdges]);
       cy.layout(layoutOpts(cur.graph_layout) as cytoscape.LayoutOptions).run();
       cy.fit(undefined, 24);
       setStatus(`${data.nodes.length} nodes, ${data.edges.length} edges — ${queryName}`);
@@ -548,6 +565,42 @@ export default function GraphPanel({ ui, onUiChange, backendType = "sqlite" }: P
     return () => document.removeEventListener("keydown", handler);
   }, []);
 
+  async function showDirection(nodeId: string, direction: "in" | "out") {
+    const cy = cyRef.current;
+    if (!cy) return;
+    try {
+      const data = await apiJson<any>(`/api/nodes/${encodeURIComponent(nodeId)}/neighbors?direction=${direction}`);
+      const groups = direction === "out" ? (data.outbound_groups || []) : (data.inbound_groups || []);
+      // Clear graph and show only this node + its directional neighbors
+      const cur = uiRef.current;
+      const centerNode = cy.getElementById(nodeId);
+      const centerData = centerNode.length ? centerNode.data() : null;
+      const newNodes: any[] = [];
+      const newEdges: any[] = [];
+      if (centerData) {
+        newNodes.push({ data: { ...centerData } });
+      }
+      for (const g of groups) {
+        for (const n of g.nodes) {
+          const icon = NODE_ICON_SVGS[n.kind] || NODE_ICON_SVGS.Source;
+          newNodes.push({ data: { id: n.id, label: n.properties?.url || n.properties?.hostname || n.properties?.name || n.kind, bg: typeColors[n.kind] || DEFAULT_NODE_COLOR, kind: n.kind, props: n.properties, size: n.kind === "Host" ? cur.node_size * 1.4 : cur.node_size, iconSvg: icon } });
+          const edgeId = `${direction === "out" ? nodeId : n.id}_${direction === "out" ? n.id : nodeId}_${g.rel_type}`;
+          newEdges.push({ data: { id: edgeId, source: direction === "out" ? nodeId : n.id, target: direction === "out" ? n.id : nodeId, ec: "#666", kind: g.rel_type } });
+        }
+      }
+      cy.elements().remove();
+      cy.add([...newNodes, ...newEdges]);
+      cy.layout(layoutOpts(cur.graph_layout) as cytoscape.LayoutOptions).run();
+      cy.fit(undefined, 40);
+      const total = groups.reduce((a: number, g: any) => a + g.nodes.length, 0);
+      setStatus(`${direction === "out" ? "Outbound" : "Inbound"}: ${total} nodes`);
+      setGraphEmpty(false);
+    } catch (e) {
+      setStatus(`Failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    setContextMenu(null);
+  }
+
   async function showNeighbors(nodeId: string) {
     const cy = cyRef.current;
     if (!cy) return;
@@ -619,10 +672,9 @@ export default function GraphPanel({ ui, onUiChange, backendType = "sqlite" }: P
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
       });
       const cur = uiRef.current;
-      const nodes = data.nodes.map((n) => ({ data: { id: n.id, label: smartLabel(n.kind, n.properties, labelModeRef.current, cur.label_max_len), bg: n.color || DEFAULT_NODE_COLOR, kind: n.kind, props: n.properties, size: n.kind === "Host" ? cur.node_size * 1.4 : cur.node_size } }));
-      const edges = data.edges.map((e) => ({ data: { id: e.id, source: e.source, target: e.target, ec: e.color || "#666", kind: e.kind } }));
+      const { cyNodes, cyEdges } = mapGraphData(data, cur);
       cy.elements().remove();
-      cy.add([...nodes, ...edges]);
+      cy.add([...cyNodes, ...cyEdges]);
       cy.layout(layoutOpts(cur.graph_layout) as cytoscape.LayoutOptions).run();
       cy.fit(undefined, 24);
       setStatus(`${data.nodes.length} nodes, ${data.edges.length} edges — custom query`);
@@ -640,10 +692,9 @@ export default function GraphPanel({ ui, onUiChange, backendType = "sqlite" }: P
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sql: rawSql }),
       });
       const cur = uiRef.current;
-      const nodes = data.nodes.map((n) => ({ data: { id: n.id, label: smartLabel(n.kind, n.properties, labelModeRef.current, cur.label_max_len), bg: n.color || DEFAULT_NODE_COLOR, kind: n.kind, props: n.properties, size: n.kind === "Host" ? cur.node_size * 1.4 : cur.node_size } }));
-      const edges = data.edges.map((e) => ({ data: { id: e.id, source: e.source, target: e.target, ec: e.color || "#666", kind: e.kind } }));
+      const { cyNodes, cyEdges } = mapGraphData(data, cur);
       cy.elements().remove();
-      cy.add([...nodes, ...edges]);
+      cy.add([...cyNodes, ...cyEdges]);
       cy.layout(layoutOpts(cur.graph_layout) as cytoscape.LayoutOptions).run();
       cy.fit(undefined, 24);
       setStatus(`${data.nodes.length} nodes, ${data.edges.length} edges — raw SQL`);
@@ -803,9 +854,12 @@ export default function GraphPanel({ ui, onUiChange, backendType = "sqlite" }: P
       {/* Context menu */}
       {contextMenu && (
         <div className="graph-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={(e) => e.stopPropagation()}>
+          <button type="button" onClick={() => void showDirection(contextMenu.nodeId, "out")}>Show outbound</button>
+          <button type="button" onClick={() => void showDirection(contextMenu.nodeId, "in")}>Show inbound</button>
+          <button type="button" onClick={() => void showNeighbors(contextMenu.nodeId)}>Expand all neighbors</button>
+          <hr />
           <button type="button" onClick={() => { setPathStart({ id: contextMenu.nodeId, label: contextMenu.nodeLabel }); setContextMenu(null); }}>Set as path start</button>
           <button type="button" onClick={() => { setPathEnd({ id: contextMenu.nodeId, label: contextMenu.nodeLabel }); setContextMenu(null); }}>Set as path end</button>
-          <button type="button" onClick={() => void showNeighbors(contextMenu.nodeId)}>Expand neighbors</button>
           <hr />
           <button type="button" onClick={() => { cyRef.current?.getElementById(contextMenu.nodeId)?.style("display", "none"); setContextMenu(null); }}>Hide node</button>
           <button type="button" onClick={() => { navigator.clipboard.writeText(contextMenu.nodeId); setContextMenu(null); }}>Copy ID</button>
@@ -820,6 +874,13 @@ export default function GraphPanel({ ui, onUiChange, backendType = "sqlite" }: P
             <span className="bh-inspector-label">{"label" in selected ? String((selected as { label: string }).label) : selected.kind}</span>
             <button type="button" className="ghost bh-inspector-close" onClick={() => setSelected(null)}>✕</button>
           </div>
+          {"source" in selected ? null : (
+            <div className="bh-inspector-actions">
+              <button type="button" onClick={() => void showDirection(selected.id, "out")}>→ Outbound</button>
+              <button type="button" onClick={() => void showDirection(selected.id, "in")}>← Inbound</button>
+              <button type="button" onClick={() => void showNeighbors(selected.id)}>⇔ All</button>
+            </div>
+          )}
           <details className="bh-inspector-section" open>
             <summary>Object Information</summary>
             <div className="bh-inspector-props">
