@@ -248,7 +248,10 @@ export default function OperationsPanel() {
                         <span className="ops-mod-desc">{m.desc}</span>
                       </label>
                       {enabledModules.has(m.id) && m.phase === "fuzz" && (
-                        <input className="ops-mod-wordlist" value={moduleWordlists[m.id] || ""} onChange={e => setModuleWordlists(prev => ({...prev, [m.id]: e.target.value}))} placeholder="Wordlist path (optional)" />
+                        <div className="ops-mod-wl-row">
+                          <span className="ops-mod-wl-current">{moduleWordlists[m.id] ? moduleWordlists[m.id]!.split("/").pop() : "common.txt (default)"}</span>
+                          <WordlistPicker current={moduleWordlists[m.id] || ""} onSelect={p => setModuleWordlists(prev => ({...prev, [m.id]: p}))} />
+                        </div>
                       )}
                     </div>
                   ))}
@@ -412,5 +415,66 @@ function FuzzingCard({ log }: { log: (phase: string, msg: string, level?: "info"
         </div>
       )}
     </details>
+  );
+}
+
+
+function WordlistPicker({ current, onSelect }: { current: string; onSelect: (path: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [wordlists, setWordlists] = useState<Wordlist[]>([]);
+  const [search, setSearch] = useState("");
+  const [category, setCategory] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    const params = new URLSearchParams();
+    if (category) params.set("category", category);
+    if (search) params.set("search", search);
+    params.set("limit", "100");
+    apiJson<{wordlists: Wordlist[]}>(`/api/wordlists?${params}`)
+      .then(d => setWordlists(d.wordlists))
+      .catch(() => setWordlists([]));
+  }, [open, search, category]);
+
+  const categories = [...new Set(wordlists.map(w => w.category))].sort();
+
+  return (
+    <>
+      <button type="button" className="ghost ops-wl-change-btn" onClick={() => setOpen(true)}>Change</button>
+      {open && (
+        <div className="wl-picker-overlay" onClick={() => setOpen(false)}>
+          <div className="wl-picker" onClick={e => e.stopPropagation()}>
+            <div className="wl-picker-header">
+              <h3>Select Wordlist</h3>
+              <button type="button" className="ghost" onClick={() => setOpen(false)}>✕</button>
+            </div>
+            <div className="wl-picker-filters">
+              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search wordlists..." autoFocus className="wl-picker-search" />
+              <select value={category} onChange={e => setCategory(e.target.value)} className="wl-picker-cat">
+                <option value="">All categories</option>
+                {categories.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div className="wl-picker-list">
+              {wordlists.map(w => (
+                <button key={w.path} type="button"
+                  className={`wl-picker-item ${w.path === current ? "wl-picker-active" : ""}`}
+                  onClick={() => { onSelect(w.path); setOpen(false); }}>
+                  <span className="wl-picker-name">{w.name}</span>
+                  <span className="wl-picker-meta">
+                    <span className="badge">{w.category}</span>
+                    <span>{w.lines.toLocaleString()} lines</span>
+                  </span>
+                  <span className="wl-picker-path">{w.relative}</span>
+                </button>
+              ))}
+              {wordlists.length === 0 && (
+                <div className="wl-picker-empty">No wordlists found. Install SecLists in the Wordlists section below.</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
