@@ -1542,3 +1542,13 @@ button.ghost-inline:hover:not(:disabled) {
 .graph-legend { position: absolute; bottom: 12px; left: 12px; background: var(--bg-card, #1a1a1a); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font-size: 0.75rem; z-index: 5; min-width: 100px; }
 .graph-legend-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; font-weight: 600; font-size: 0.78rem; }
 .graph-legend-item { display: flex; align-items: center; gap: 6px; padding: 1px 0; }
+
+/* --- Scan Preset Cards --- */
+.preset-label { font-size: 0.82rem; font-weight: 500; margin-bottom: 6px; }
+.preset-cards { display: flex; gap: 8px; flex-wrap: wrap; }
+.preset-card { display: flex; flex-direction: column; gap: 3px; padding: 10px 14px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; text-align: left; min-width: 140px; flex: 1; color: var(--fg); }
+.preset-card:hover { border-color: var(--accent); }
+.preset-card-active { border-color: var(--accent); background: var(--bg-alt, #1e1e1e); }
+.preset-card-name { font-weight: 600; font-size: 0.88rem; text-transform: capitalize; }
+.preset-card-desc { font-size: 0.75rem; color: var(--fg-dim, #999); }
+.preset-card-scanners { font-size: 0.7rem; color: var(--accent); margin-top: 2px; }
