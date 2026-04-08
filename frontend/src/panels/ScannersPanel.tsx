@@ -103,8 +103,6 @@ export default function ScannersPanel() {
     }
   }
 
-  const refreshPlugins = () =>
-    pluginAction("__refresh__", () => apiFetch("/api/plugins").then(r => r), "Plugin list refreshed.");
   const installPlugin = (id: string) =>
     pluginAction(id, () => apiFetch(`/api/plugins/${id}/install`, { method: "POST" }), `${id} installed.`);
   const updatePlugin = (id: string) =>
