@@ -25,6 +25,7 @@ type PluginInfo = {
   source_repo: string;
   updatable: boolean;
   update_available: boolean;
+  category?: string;
 };
 
 type ScanProgress = {
@@ -54,6 +55,11 @@ export default function ScannersPanel() {
   const [plugins, setPlugins] = useState<PluginInfo[] | null>(null);
   const [pluginBusy, setPluginBusy] = useState<string | null>(null);
   const [pluginMsg, setPluginMsg] = useState<string | null>(null);
+  const [categoryFilter, setCategoryFilter] = useState<string>("all");
+  const [searchFilter, setSearchFilter] = useState("");
+  const [lastCheckTime, setLastCheckTime] = useState<string | null>(null);
+  const [checkingUpdates, setCheckingUpdates] = useState(false);
+  const [updatingAll, setUpdatingAll] = useState(false);
   const pluginMsgTimer = useCallback((msg: string) => {
     setPluginMsg(msg);
     const t = setTimeout(() => setPluginMsg(null), 3000);
@@ -70,15 +76,25 @@ export default function ScannersPanel() {
 
   async function pluginAction(
     busyId: string,
-    action: () => Promise<unknown>,
+    action: () => Promise<Response>,
     successMsg: string,
   ) {
     setPluginBusy(busyId);
     setPluginMsg(null);
     try {
-      await action();
-      const list = await apiJson<PluginInfo[]>("/api/plugins");
-      setPlugins(list);
+      const r = await action();
+      if (r instanceof Response) {
+        const data = await r.json();
+        if (data.plugins) {
+          setPlugins(data.plugins);
+        } else {
+          const list = await apiJson<PluginInfo[]>("/api/plugins");
+          setPlugins(list);
+        }
+      } else {
+        const list = await apiJson<PluginInfo[]>("/api/plugins");
+        setPlugins(list);
+      }
       pluginMsgTimer(successMsg);
     } catch (e) {
       setPluginMsg(e instanceof Error ? e.message : String(e));
@@ -88,13 +104,44 @@ export default function ScannersPanel() {
   }
 
   const refreshPlugins = () =>
-    pluginAction("__refresh__", () => Promise.resolve(), "Plugin list refreshed.");
+    pluginAction("__refresh__", () => apiFetch("/api/plugins").then(r => r), "Plugin list refreshed.");
   const installPlugin = (id: string) =>
     pluginAction(id, () => apiFetch(`/api/plugins/${id}/install`, { method: "POST" }), `${id} installed.`);
   const updatePlugin = (id: string) =>
     pluginAction(id, () => apiFetch(`/api/plugins/${id}/update`, { method: "POST" }), `${id} updated.`);
   const uninstallPlugin = (id: string) =>
     pluginAction(id, () => apiFetch(`/api/plugins/${id}`, { method: "DELETE" }), `${id} uninstalled.`);
+
+  async function checkForUpdates() {
+    setCheckingUpdates(true);
+    setPluginMsg(null);
+    try {
+      await apiFetch("/api/plugins/check-updates", { method: "POST" });
+      const list = await apiJson<PluginInfo[]>("/api/plugins");
+      setPlugins(list);
+      setLastCheckTime(new Date().toLocaleTimeString());
+      pluginMsgTimer("Update check complete.");
+    } catch (e) {
+      setPluginMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCheckingUpdates(false);
+    }
+  }
+
+  async function updateAllPlugins() {
+    setUpdatingAll(true);
+    setPluginMsg(null);
+    try {
+      const r = await apiFetch("/api/plugins/update-all", { method: "POST" });
+      const data = await r.json();
+      if (data.plugins) setPlugins(data.plugins);
+      pluginMsgTimer(`Updated ${data.updated?.length || 0} plugins.`);
+    } catch (e) {
+      setPluginMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setUpdatingAll(false);
+    }
+  }
 
   useEffect(() => {
     let ok = true;
@@ -125,6 +172,26 @@ export default function ScannersPanel() {
         .sort((a, b) => a.name.localeCompare(b.name)),
     [ingestors],
   );
+
+  const categories = useMemo(() => {
+    if (!plugins) return [];
+    const cats = new Set(plugins.map(p => p.category || "other"));
+    return ["all", ...Array.from(cats).sort()];
+  }, [plugins]);
+
+  const filteredPlugins = useMemo(() => {
+    if (!plugins) return [];
+    return plugins.filter(p => {
+      if (categoryFilter !== "all" && (p.category || "other") !== categoryFilter) return false;
+      if (searchFilter) {
+        const q = searchFilter.toLowerCase();
+        if (!p.name.toLowerCase().includes(q) && !p.description.toLowerCase().includes(q) && !p.id.toLowerCase().includes(q)) return false;
+      }
+      return true;
+    });
+  }, [plugins, categoryFilter, searchFilter]);
+
+  const hasUpdates = useMemo(() => plugins?.some(p => p.update_available) ?? false, [plugins]);
 
   const toggleTpl = useCallback((id: string) => {
     setSelTpl((prev) => {
@@ -245,26 +312,50 @@ export default function ScannersPanel() {
       <div className="card">
         <div className="card-head">
           <h2>Plugin Store</h2>
-          <button type="button" className="btn-secondary" onClick={() => void refreshPlugins()} disabled={!!pluginBusy}>
-            Check for updates
-          </button>
+          <div className="plugin-store-actions">
+            <button type="button" className="btn-secondary" onClick={() => void checkForUpdates()} disabled={checkingUpdates || !!pluginBusy}>
+              {checkingUpdates ? "Checking..." : "Check for updates"}
+            </button>
+            {lastCheckTime && <span className="muted small-note">Last: {lastCheckTime}</span>}
+            {hasUpdates && (
+              <button type="button" className="primary" onClick={() => void updateAllPlugins()} disabled={updatingAll || !!pluginBusy}>
+                {updatingAll ? "Updating..." : "Update all"}
+              </button>
+            )}
+          </div>
         </div>
         <p className="muted">
           Install and manage scanner tools. Binaries are downloaded from official GitHub releases.
         </p>
+        <div className="plugin-filters">
+          <div className="plugin-category-pills">
+            {categories.map(cat => (
+              <button key={cat} type="button"
+                className={`pill ${categoryFilter === cat ? "pill-active" : ""}`}
+                onClick={() => setCategoryFilter(cat)}>
+                {cat === "all" ? "All" : cat.toUpperCase()}
+              </button>
+            ))}
+          </div>
+          <input type="text" className="plugin-search" placeholder="Search plugins..."
+            value={searchFilter} onChange={e => setSearchFilter(e.target.value)} />
+        </div>
         {pluginMsg && <div className="plugin-msg">{pluginMsg}</div>}
         {plugins === null ? (
           <p className="muted">Loading plugins...</p>
-        ) : plugins.length === 0 ? (
-          <p className="empty-hint">No plugins available.</p>
+        ) : filteredPlugins.length === 0 ? (
+          <p className="empty-hint">
+            {plugins.length === 0 ? "No plugins available." : "No plugins match your filters."}
+          </p>
         ) : (
           <div className="plugin-grid">
-            {plugins.map((p) => (
+            {filteredPlugins.map((p) => (
               <div key={p.id} className="plugin-card">
                 <div className="plugin-header">
                   <span className={`status-dot ${p.binary_found ? "green" : p.installed ? "yellow" : p.update_available ? "blue" : "gray"}`} />
                   <span className="plugin-name">{p.name}</span>
                   <span className="badge">{p.type}</span>
+                  {p.category && <span className="badge badge-category">{p.category}</span>}
                 </div>
                 <p className="plugin-desc">{p.description}</p>
                 <div className="plugin-meta">
