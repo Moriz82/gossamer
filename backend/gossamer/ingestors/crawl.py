@@ -32,6 +32,56 @@ _SENSITIVE_PATHS = [
 ]
 
 
+def _collect_security_notes(
+    headers: dict[str, str],
+    content_type: str,
+    body: str | None = None,
+) -> dict[str, str]:
+    """Extract security metadata to store as endpoint properties (not Finding nodes)."""
+    notes: dict[str, str] = {}
+    lh = {k.lower(): v for k, v in headers.items()}
+
+    # Server version
+    server = lh.get("server", "")
+    if server and re.search(r"\d+\.\d+", server):
+        notes["server_version"] = server
+
+    # Cookie flags
+    set_cookie = lh.get("set-cookie", "")
+    if set_cookie:
+        missing_flags: list[str] = []
+        sc_lower = set_cookie.lower()
+        if "secure" not in sc_lower:
+            missing_flags.append("Secure")
+        if "httponly" not in sc_lower:
+            missing_flags.append("HttpOnly")
+        if "samesite" not in sc_lower:
+            missing_flags.append("SameSite")
+        if missing_flags:
+            notes["cookie_missing_flags"] = ", ".join(missing_flags)
+
+    # Missing security headers (HTML only)
+    ct = (content_type or "").lower()
+    if "text/html" in ct:
+        missing_hdrs: list[str] = []
+        if "x-content-type-options" not in lh:
+            missing_hdrs.append("X-Content-Type-Options")
+        if "x-frame-options" not in lh:
+            missing_hdrs.append("X-Frame-Options")
+        if "content-security-policy" not in lh and "content-security-policy-report-only" not in lh:
+            missing_hdrs.append("Content-Security-Policy")
+        if missing_hdrs:
+            notes["missing_headers"] = ", ".join(missing_hdrs)
+
+    # Directory listing
+    if body:
+        body_lower = body.lower()
+        if "<title>index of" in body_lower or "<h1>index of" in body_lower:
+            notes["directory_listing"] = "true"
+
+    return notes
+
+
 def _emit_crawl_audit_findings(
     batch: RawObservationBatch,
     *,
@@ -44,9 +94,17 @@ def _emit_crawl_audit_findings(
     source_label: str,
     body: str | None = None,
     redirect_location: str | None = None,
+    endpoint_props: dict | None = None,
 ) -> None:
-    """Passive checks: interesting status codes + baseline security headers on HTML."""
+    """Passive checks: only real findings become nodes. Fingerprinting goes to endpoint props."""
     from gossamer.ingestors.finding_helpers import emit_finding_on_target
+
+    # Collect security metadata → stored on the endpoint node, not as findings
+    sec_notes = _collect_security_notes(headers, content_type, body)
+    if endpoint_props is not None:
+        endpoint_props.update(sec_notes)
+
+    # --- Only real findings below this point ---
 
     if status is not None:
         if status in (401, 403):
@@ -88,59 +146,7 @@ def _emit_crawl_audit_findings(
 
     lh = {k.lower(): v for k, v in headers.items()}
 
-    # --- Directory listing detection ---
-    if body:
-        body_lower = body.lower()
-        if "<title>index of" in body_lower or "<h1>index of" in body_lower:
-            emit_finding_on_target(
-                batch,
-                scanner="crawl_audit",
-                dedup_parts=("directory_listing", url),
-                target_uri=url,
-                method=method,
-                source_label=source_label,
-                source_key=source_key,
-                finding_props={
-                    "scanner": "crawl_audit",
-                    "name": "Directory listing enabled",
-                    "severity": "medium",
-                    "template_id": "directory_listing",
-                    "description": "Server exposes directory contents.",
-                },
-                edge_props={"check": "directory_listing"},
-            )
-
-    # --- Cookie security ---
-    set_cookie = lh.get("set-cookie", "")
-    if set_cookie:
-        issues: list[str] = []
-        sc_lower = set_cookie.lower()
-        if "secure" not in sc_lower:
-            issues.append("Secure")
-        if "httponly" not in sc_lower:
-            issues.append("HttpOnly")
-        if "samesite" not in sc_lower:
-            issues.append("SameSite")
-        if issues:
-            emit_finding_on_target(
-                batch,
-                scanner="crawl_audit",
-                dedup_parts=("insecure_cookie", url, ",".join(issues)),
-                target_uri=url,
-                method=method,
-                source_label=source_label,
-                source_key=source_key,
-                finding_props={
-                    "scanner": "crawl_audit",
-                    "name": f"Cookie missing: {', '.join(issues)}",
-                    "severity": "low",
-                    "template_id": "insecure_cookie",
-                    "description": f"Set-Cookie header is missing flags: {', '.join(issues)}.",
-                },
-                edge_props={"check": "insecure_cookie"},
-            )
-
-    # --- CORS wildcard ---
+    # --- CORS wildcard (real finding) ---
     if lh.get("access-control-allow-origin") == "*":
         emit_finding_on_target(
             batch,
@@ -160,28 +166,7 @@ def _emit_crawl_audit_findings(
             edge_props={"check": "cors_wildcard"},
         )
 
-    # --- Server info disclosure ---
-    server = lh.get("server", "")
-    if server and re.search(r"\d+\.\d+", server):
-        emit_finding_on_target(
-            batch,
-            scanner="crawl_audit",
-            dedup_parts=("server_version_disclosure", url),
-            target_uri=url,
-            method=method,
-            source_label=source_label,
-            source_key=source_key,
-            finding_props={
-                "scanner": "crawl_audit",
-                "name": f"Server version disclosed: {server}",
-                "severity": "low",
-                "template_id": "server_version_disclosure",
-                "description": f"Server header reveals version info: {server}.",
-            },
-            edge_props={"check": "server_version_disclosure"},
-        )
-
-    # --- Sensitive paths ---
+    # --- Sensitive paths (real finding) ---
     parsed_url = urlparse(url)
     path = parsed_url.path.lower()
     for sp in _SENSITIVE_PATHS:
@@ -205,7 +190,7 @@ def _emit_crawl_audit_findings(
             )
             break
 
-    # --- Open redirect ---
+    # --- Open redirect (real finding) ---
     if status is not None and 300 <= status < 400:
         location = redirect_location or lh.get("location", "")
         if location:
@@ -229,36 +214,6 @@ def _emit_crawl_audit_findings(
                     },
                     edge_props={"check": "open_redirect"},
                 )
-
-    # --- Missing security headers (HTML only) ---
-    ct = (content_type or "").lower()
-    if "text/html" not in ct:
-        return
-    missing: list[str] = []
-    if "x-content-type-options" not in lh:
-        missing.append("X-Content-Type-Options")
-    if "x-frame-options" not in lh:
-        missing.append("X-Frame-Options")
-    if "content-security-policy" not in lh and "content-security-policy-report-only" not in lh:
-        missing.append("Content-Security-Policy")
-    if missing:
-        emit_finding_on_target(
-            batch,
-            scanner="crawl_audit",
-            dedup_parts=("security_headers", url, ",".join(missing)),
-            target_uri=url,
-            method=method,
-            source_label=source_label,
-            source_key=source_key,
-            finding_props={
-                "scanner": "crawl_audit",
-                "name": "Missing recommended security headers",
-                "severity": "low",
-                "template_id": "missing_security_headers",
-                "description": "Not present on response: " + ", ".join(missing),
-            },
-            edge_props={"check": "security_headers"},
-        )
 
 
 class CrawlIngestor(Ingestor):
@@ -458,6 +413,7 @@ class CrawlIngestor(Ingestor):
                         source_key=source_key,
                         source_label=ctx.source_label,
                         body=result.body,
+                        endpoint_props=props,
                     )
 
                 # Emit redirect chain: src[0] -> src[1] -> ... -> final_url

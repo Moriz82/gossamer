@@ -1629,6 +1629,7 @@ button.ghost-inline:hover:not(:disabled) {
 .bh-prop { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 0.78rem; gap: 12px; }
 .bh-prop-key { font-weight: 600; color: var(--c-text, #eee); white-space: nowrap; }
 .bh-prop-val { color: var(--c-text-muted, #999); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bh-prop-warn .bh-prop-val { color: #ff9800; }
 
 /* --- Inspector Relationships --- */
 .bh-inspector-rels { padding: 0 14px 8px; }

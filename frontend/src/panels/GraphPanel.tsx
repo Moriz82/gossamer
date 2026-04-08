@@ -824,11 +824,32 @@ export default function GraphPanel({ ui, onUiChange, backendType = "sqlite" }: P
               {"source" in selected && (
                 <div className="bh-prop"><span className="bh-prop-key">Edge</span><span className="bh-prop-val">{(selected as {source: string; target: string}).source} &rarr; {(selected as {source: string; target: string}).target}</span></div>
               )}
-              {Object.entries(selected.properties).map(([k, v]) => (
+              {Object.entries(selected.properties)
+                .filter(([k]) => !["server_version","cookie_missing_flags","missing_headers","directory_listing","response_id"].includes(k))
+                .map(([k, v]) => (
                 <div key={k} className="bh-prop"><span className="bh-prop-key">{k}</span><span className="bh-prop-val">{String(v)}</span></div>
               ))}
             </div>
           </details>
+          {selected.kind === "Endpoint" && (selected.properties.server_version || selected.properties.cookie_missing_flags || selected.properties.missing_headers || selected.properties.directory_listing) && (
+            <details className="bh-inspector-section">
+              <summary>Security Notes</summary>
+              <div className="bh-inspector-props">
+                {selected.properties.server_version && (
+                  <div className="bh-prop bh-prop-warn"><span className="bh-prop-key">Server</span><span className="bh-prop-val">{String(selected.properties.server_version)}</span></div>
+                )}
+                {selected.properties.cookie_missing_flags && (
+                  <div className="bh-prop bh-prop-warn"><span className="bh-prop-key">Cookie flags missing</span><span className="bh-prop-val">{String(selected.properties.cookie_missing_flags)}</span></div>
+                )}
+                {selected.properties.missing_headers && (
+                  <div className="bh-prop bh-prop-warn"><span className="bh-prop-key">Missing headers</span><span className="bh-prop-val">{String(selected.properties.missing_headers)}</span></div>
+                )}
+                {selected.properties.directory_listing && (
+                  <div className="bh-prop bh-prop-warn"><span className="bh-prop-key">Directory listing</span><span className="bh-prop-val">Enabled</span></div>
+                )}
+              </div>
+            </details>
+          )}
           {"source" in selected ? null : <InspectorRelationships nodeId={selected.id} />}
         </div>
       )}
