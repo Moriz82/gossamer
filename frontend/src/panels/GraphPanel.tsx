@@ -591,7 +591,7 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi, backendType = 
   }
 
   return (
-    <div className="graph-panel">
+    <div className={`graph-panel ${selected ? "inspector-open" : ""}`}>
       <div className="graph-toolbar panel-toolbar">
         <div className="toolbar-group">
           <button type="button" onClick={() => void loadGraph()}>
@@ -838,10 +838,11 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi, backendType = 
         </div>
       )}
       <div className="graph-inspector">
-        <h3 className="inspector-title">Inspector</h3>
-        {!selected ? (
-          <p className="inspector-empty inspector-body">Select a node or edge</p>
-        ) : (
+        <div className="inspector-title-row">
+          <h3 className="inspector-title">Inspector</h3>
+          <button type="button" className="ghost inspector-close" onClick={() => setSelected(null)}>&times;</button>
+        </div>
+        {selected && (
           <div className="inspector-body">
             <div className="inspector-header">
               <span className="inspector-kind">{selected.kind}</span>

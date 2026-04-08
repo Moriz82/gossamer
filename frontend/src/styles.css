@@ -393,10 +393,13 @@ html, body {
 /* Graph 3-column layout */
 .graph-panel {
   display: grid;
-  grid-template-columns: 240px 1fr 280px;
+  grid-template-columns: 220px 1fr;
   grid-template-rows: auto 1fr;
   flex: 1;
   min-height: 0;
+}
+.graph-panel.inspector-open {
+  grid-template-columns: 220px 1fr 240px;
 }
 
 .graph-toolbar {
@@ -479,6 +482,10 @@ html, body {
   overflow-y: auto;
   border-left: 1px solid var(--c-border);
   background: var(--c-surface);
+  display: none;
+}
+.graph-panel.inspector-open .graph-inspector {
+  display: block;
 }
 
 
@@ -1317,15 +1324,21 @@ button.ghost-inline:hover:not(:disabled) {
 }
 
 /* Inspector header */
+.inspector-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--c-border);
+}
 .inspector-title {
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--c-text-muted);
-  padding: var(--sp-3) var(--sp-4);
-  border-bottom: 1px solid var(--c-border);
   margin: 0;
 }
+.inspector-close { padding: 0 4px; font-size: 14px; line-height: 1; }
 .inspector-body {
   padding: 0 var(--sp-4);
 }
