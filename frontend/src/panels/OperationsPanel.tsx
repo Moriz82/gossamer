@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { apiFetch, apiJson, getAuthHeader } from "../api";
 
 type CrawlProgress = {
-  type: "progress" | "complete" | "error";
+  type: "progress" | "complete" | "crawl_complete" | "scan_progress" | "error";
   visited?: number;
   queue_size?: number;
   max_pages?: number;
@@ -25,6 +25,8 @@ export default function OperationsPanel() {
   const [maxPages, setMaxPages] = useState("");
   const [crawlMode, setCrawlMode] = useState<"crawl_only" | "crawl_audit">("crawl_only");
   const [scopeHosts, setScopeHosts] = useState("");
+  const [presets, setPresets] = useState<{name: string; description: string; audit: boolean; scanner_summary: string}[] | null>(null);
+  const [selectedPreset, setSelectedPreset] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [crawlProgress, setCrawlProgress] = useState<CrawlProgress | null>(null);
@@ -34,6 +36,8 @@ export default function OperationsPanel() {
     apiJson<{ name: string }[]>("/api/ingestors")
       .then((rows) => setIngestorNames(rows.map((r) => r.name)))
       .catch(() => setIngestorNames([]));
+    apiJson<{name: string; description: string; audit: boolean; scanner_summary: string}[]>("/api/scan-presets")
+      .then(setPresets).catch(() => {});
   }, []);
 
   async function onUpload(e: FormEvent<HTMLFormElement>) {
@@ -92,7 +96,8 @@ export default function OperationsPanel() {
     const reqBody: Record<string, unknown> = {
       seeds_file: crawlSeeds,
       source_label: crawlSource,
-      crawl_mode: crawlMode,
+      crawl_mode: selectedPreset ? "crawl_audit" : crawlMode,
+      scan_preset: selectedPreset || undefined,
     };
     if (maxDepth) reqBody.max_depth = Number(maxDepth);
     if (maxPages) reqBody.max_pages = Number(maxPages);
@@ -130,12 +135,17 @@ export default function OperationsPanel() {
           const line = part.replace(/^data: /, "").trim();
           if (!line) continue;
           try {
-            const evt = JSON.parse(line) as CrawlProgress;
+            const evt = JSON.parse(line) as CrawlProgress & { scanner?: string; phase?: string };
             if (evt.type === "progress") {
               setCrawlProgress(evt);
+            } else if (evt.type === "crawl_complete") {
+              setCrawlProgress(null);
+              setMsg(`Crawl done: ${evt.nodes} nodes, ${evt.edges} edges. ${selectedPreset ? "Running scanners..." : ""}`);
+            } else if (evt.type === "scan_progress") {
+              setMsg(`Scanner ${evt.scanner || "?"}: ${evt.phase || "running"}`);
             } else if (evt.type === "complete") {
               setCrawlProgress(null);
-              setMsg(`Crawl complete: ${evt.nodes} nodes, ${evt.edges} edges`);
+              setMsg(`Complete: ${evt.nodes} nodes, ${evt.edges} edges`);
             } else if (evt.type === "error") {
               setCrawlProgress(null);
               setMsg(`Error: ${evt.detail}`);
@@ -251,13 +261,22 @@ export default function OperationsPanel() {
             Max pages (optional)
             <input value={maxPages} onChange={(e) => setMaxPages(e.target.value)} placeholder="100" />
           </label>
-          <label className="full">
-            Crawl mode
-            <select value={crawlMode} onChange={(e) => setCrawlMode(e.target.value as typeof crawlMode)}>
-              <option value="crawl_only">Crawl only (discover surface)</option>
-              <option value="crawl_audit">Crawl + passive audit (status + headers)</option>
-            </select>
-          </label>
+          <div className="full">
+            <div className="preset-label">Scan preset</div>
+            <div className="preset-cards">
+              <button type="button" className={`preset-card ${!selectedPreset ? "preset-card-active" : ""}`} onClick={() => { setSelectedPreset(null); setCrawlMode("crawl_only"); }}>
+                <div className="preset-card-name">None</div>
+                <div className="preset-card-desc">Crawl only — discover surface without scanning</div>
+              </button>
+              {presets?.map(p => (
+                <button key={p.name} type="button" className={`preset-card ${selectedPreset === p.name ? "preset-card-active" : ""}`} onClick={() => setSelectedPreset(p.name)}>
+                  <div className="preset-card-name">{p.name}</div>
+                  <div className="preset-card-desc">{p.description}</div>
+                  <div className="preset-card-scanners">{p.scanner_summary}</div>
+                </button>
+              ))}
+            </div>
+          </div>
           <label className="full">
             Scope hosts (one per line, optional)
             <textarea value={scopeHosts} onChange={(e) => setScopeHosts(e.target.value)} rows={3} />

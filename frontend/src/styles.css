@@ -1451,3 +1451,13 @@ button.ghost-inline:hover:not(:disabled) {
   font-size: 12px;
   color: var(--c-text-muted);
 }
+
+/* --- Scan Preset Cards --- */
+.preset-label { font-size: 0.82rem; font-weight: 500; margin-bottom: 6px; }
+.preset-cards { display: flex; gap: 8px; flex-wrap: wrap; }
+.preset-card { display: flex; flex-direction: column; gap: 3px; padding: 10px 14px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; text-align: left; min-width: 140px; flex: 1; color: var(--fg); }
+.preset-card:hover { border-color: var(--accent); }
+.preset-card-active { border-color: var(--accent); background: var(--bg-alt, #1e1e1e); }
+.preset-card-name { font-weight: 600; font-size: 0.88rem; text-transform: capitalize; }
+.preset-card-desc { font-size: 0.75rem; color: var(--fg-dim, #999); }
+.preset-card-scanners { font-size: 0.7rem; color: var(--accent); margin-top: 2px; }
