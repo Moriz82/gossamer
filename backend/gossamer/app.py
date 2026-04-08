@@ -35,6 +35,8 @@ from gossamer.plugin_store import (
 )
 from gossamer.scanner_runner import run_scanner, stop_scanner
 from gossamer.pipeline import ingest_and_store
+from gossamer.graph_queries.library import get_graph_query, list_graph_queries
+from gossamer.graph_queries.builder import run_visual_query, run_raw_sql
 from gossamer.queries.builtins import *  # noqa: F401,F403 - register builtins
 from gossamer.queries.registry import all_queries, get_query
 from gossamer.queries.yaml_loader import load_yaml_queries
@@ -699,6 +701,64 @@ def api_scanner_run(
 def api_scanner_stop(plugin_id: str) -> dict[str, Any]:
     """Stop a running scanner."""
     return stop_scanner(plugin_id)
+
+
+
+# --- Graph query endpoints ---
+
+
+class VisualQueryBody(BaseModel):
+    node_kind: str
+    filters: list[dict[str, Any]] = Field(default_factory=list)
+    relationships: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class RawQueryBody(BaseModel):
+    sql: str = Field(..., min_length=1)
+
+
+@api.get("/graph/queries")
+def api_graph_queries() -> list[dict[str, str]]:
+    return list_graph_queries()
+
+
+@api.post("/graph/queries/{name}/run")
+def api_graph_query_run(
+    name: str,
+    store: Annotated[GraphStore, Depends(get_store)],
+) -> dict[str, Any]:
+    q = get_graph_query(name)
+    if not q:
+        raise HTTPException(404, f"Unknown graph query: {name}")
+    try:
+        snap = q.run(store)
+        return _enrich_snapshot(snap)
+    except RuntimeError as exc:
+        raise HTTPException(501, str(exc))
+
+
+@api.post("/graph/query/build")
+def api_graph_query_build(
+    body: VisualQueryBody,
+    store: Annotated[GraphStore, Depends(get_store)],
+) -> dict[str, Any]:
+    try:
+        snap = run_visual_query(store, body.model_dump())
+        return _enrich_snapshot(snap)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(400, str(exc))
+
+
+@api.post("/graph/query/raw")
+def api_graph_query_raw(
+    body: RawQueryBody,
+    store: Annotated[GraphStore, Depends(get_store)],
+) -> dict[str, Any]:
+    try:
+        snap = run_raw_sql(store, body.sql)
+        return _enrich_snapshot(snap)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(400, str(exc))
 
 
 app.include_router(api)
