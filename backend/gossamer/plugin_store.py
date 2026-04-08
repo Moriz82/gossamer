@@ -76,19 +76,37 @@ def _find_binary(plugin: PluginManifest) -> str | None:
     return shutil.which(plugin.binary_name)
 
 
+def _load_update_cache() -> dict[str, str]:
+    """Load cached latest versions from check_all_updates."""
+    cache_path = _plugin_dir() / "update_cache.json"
+    if not cache_path.exists():
+        return {}
+    try:
+        cache = json.loads(cache_path.read_text())
+        versions: dict[str, str] = {}
+        for r in cache.get("results", []):
+            if r.get("latest_version"):
+                versions[r["id"]] = r["latest_version"]
+        return versions
+    except (json.JSONDecodeError, KeyError):
+        return {}
+
+
 def list_plugins() -> list[dict[str, Any]]:
     """List all known plugins with their install status."""
     registry = _load_registry()
+    cached_versions = _load_update_cache()
     result = []
     for p in registry:
         installed_ver = _installed_version(p.id)
         binary_path = _find_binary(p)
+        latest = cached_versions.get(p.id, p.version)
         result.append({
             "id": p.id,
             "type": p.type,
             "name": p.name,
             "description": p.description,
-            "latest_version": p.version,
+            "latest_version": latest,
             "installed_version": installed_ver,
             "installed": installed_ver is not None or binary_path is not None,
             "binary_found": binary_path is not None,
@@ -97,7 +115,7 @@ def list_plugins() -> list[dict[str, Any]]:
             "updatable": p.updatable,
             "category": p.category,
             "update_available": (
-                installed_ver is not None and installed_ver != p.version
+                installed_ver is not None and installed_ver != latest
             ),
         })
     return result

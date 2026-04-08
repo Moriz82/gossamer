@@ -114,6 +114,46 @@
       "ingestor": "semgrep_json",
       "default_args": ["scan", "--json"],
       "updatable": true
+    },
+    {
+      "id": "ffuf",
+      "type": "fuzzer",
+      "name": "ffuf",
+      "description": "Fast web fuzzer for directory/file discovery and parameter fuzzing",
+      "category": "recon",
+      "version": "2.1.0",
+      "source_repo": "ffuf/ffuf",
+      "binary_name": "ffuf",
+      "install_method": "github_release",
+      "platforms": {
+        "darwin_arm64": "ffuf_2.1.0_macOS_arm64.tar.gz",
+        "darwin_amd64": "ffuf_2.1.0_macOS_amd64.tar.gz",
+        "linux_amd64": "ffuf_2.1.0_linux_amd64.tar.gz",
+        "linux_arm64": "ffuf_2.1.0_linux_arm64.tar.gz"
+      },
+      "ingestor": "",
+      "default_args": ["-mc", "200,204,301,302,307,401,403"],
+      "updatable": true
+    },
+    {
+      "id": "feroxbuster",
+      "type": "fuzzer",
+      "name": "Feroxbuster",
+      "description": "Fast, recursive content discovery tool written in Rust",
+      "category": "recon",
+      "version": "2.11.0",
+      "source_repo": "epi052/feroxbuster",
+      "binary_name": "feroxbuster",
+      "install_method": "github_release",
+      "platforms": {
+        "darwin_arm64": "aarch64-apple-darwin-feroxbuster.zip",
+        "darwin_amd64": "x86_64-apple-darwin-feroxbuster.zip",
+        "linux_amd64": "x86_64-linux-feroxbuster.zip",
+        "linux_arm64": "aarch64-linux-feroxbuster.zip"
+      },
+      "ingestor": "",
+      "default_args": ["--silent", "--json"],
+      "updatable": true
     }
   ]
 }

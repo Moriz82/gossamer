@@ -1,5 +1,5 @@
-import { FormEvent, useEffect, useRef, useState } from "react";
-import { apiFetch, apiJson, getAuthHeader } from "../api";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { apiFetch, apiJson } from "../api";
 
 type CrawlProgress = {
   type: "progress" | "complete" | "crawl_complete" | "scan_progress" | "error";
@@ -318,6 +318,8 @@ export default function OperationsPanel() {
         </div>
       </div>
 
+      <FuzzingCard />
+
       <div className="card danger-card">
         <h2>Danger zone</h2>
         <button type="button" className="danger" onClick={() => void clearGraph()} disabled={busy}>
@@ -326,6 +328,144 @@ export default function OperationsPanel() {
       </div>
 
       {msg ? <pre className="panel-msg">{msg}</pre> : null}
+    </div>
+  );
+}
+
+
+type WordlistDir = { path: string; exists: boolean };
+type Wordlist = { path: string; name: string; relative: string; category: string; lines: number; size_bytes: number };
+
+function FuzzingCard() {
+  const [dirs, setDirs] = useState<WordlistDir[]>([]);
+  const [wordlists, setWordlists] = useState<Wordlist[]>([]);
+  const [wlCategory, setWlCategory] = useState("");
+  const [wlSearch, setWlSearch] = useState("");
+  const [newDir, setNewDir] = useState("");
+  const [msg, setMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [showWordlists, setShowWordlists] = useState(false);
+
+  const loadDirs = useCallback(() => {
+    apiJson<{dirs: WordlistDir[]}>("/api/wordlists/dirs").then(d => setDirs(d.dirs)).catch(() => {});
+  }, []);
+
+  useEffect(() => { loadDirs(); }, [loadDirs]);
+
+  const loadWordlists = useCallback(() => {
+    const params = new URLSearchParams();
+    if (wlCategory) params.set("category", wlCategory);
+    if (wlSearch) params.set("search", wlSearch);
+    apiJson<{wordlists: Wordlist[]}>(`/api/wordlists?${params}`)
+      .then(d => setWordlists(d.wordlists))
+      .catch(() => setWordlists([]));
+  }, [wlCategory, wlSearch]);
+
+  useEffect(() => { if (showWordlists) loadWordlists(); }, [showWordlists, loadWordlists]);
+
+  async function installSecLists() {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await apiJson<{ok: boolean; path?: string; error?: string; message?: string}>("/api/wordlists/install-seclists", { method: "POST" });
+      setMsg(r.ok ? `SecLists installed at ${r.path || r.message}` : `Error: ${r.error}`);
+      loadDirs();
+    } catch (e) { setMsg(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
+  }
+
+  async function addDir() {
+    if (!newDir.trim()) return;
+    const r = await apiJson<{ok: boolean; error?: string}>("/api/wordlists/dirs", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: newDir }),
+    });
+    if (!r.ok) setMsg(r.error || "Failed");
+    setNewDir("");
+    loadDirs();
+  }
+
+  async function removeDir(path: string) {
+    await apiFetch("/api/wordlists/dirs", {
+      method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }),
+    });
+    loadDirs();
+  }
+
+  const categories = [...new Set(wordlists.map(w => w.category))].sort();
+
+  return (
+    <div className="card">
+      <h2>Fuzzing &amp; Wordlists</h2>
+      <p className="muted">
+        Manage wordlists for directory brute-forcing and fuzzing. Install SecLists or point to your own wordlist directories.
+      </p>
+
+      <div className="form-grid">
+        <div className="full" style={{display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center"}}>
+          <button type="button" className="primary" onClick={() => void installSecLists()} disabled={busy}>
+            {busy ? "Installing..." : "Install SecLists"}
+          </button>
+          <button type="button" onClick={() => setShowWordlists(!showWordlists)}>
+            {showWordlists ? "Hide wordlists" : "Browse wordlists"}
+          </button>
+        </div>
+
+        <details className="full">
+          <summary style={{cursor: "pointer", fontSize: "0.85rem", fontWeight: 500}}>Search directories ({dirs.filter(d => d.exists).length} found)</summary>
+          <div style={{marginTop: 8}}>
+            {dirs.map(d => (
+              <div key={d.path} style={{display: "flex", alignItems: "center", gap: 6, padding: "3px 0", fontSize: "0.8rem"}}>
+                <span className={`status-dot ${d.exists ? "green" : "gray"}`} />
+                <code style={{flex: 1}}>{d.path}</code>
+                <button type="button" className="ghost" onClick={() => void removeDir(d.path)} style={{fontSize: "0.75rem"}}>✕</button>
+              </div>
+            ))}
+            <div style={{display: "flex", gap: 6, marginTop: 6}}>
+              <input value={newDir} onChange={e => setNewDir(e.target.value)} placeholder="/path/to/wordlists" style={{flex: 1}} onKeyDown={e => { if (e.key === "Enter") void addDir(); }} />
+              <button type="button" onClick={() => void addDir()} disabled={!newDir.trim()}>Add</button>
+            </div>
+          </div>
+        </details>
+      </div>
+
+      {showWordlists && (
+        <div style={{marginTop: 12}}>
+          <div style={{display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap"}}>
+            <select value={wlCategory} onChange={e => setWlCategory(e.target.value)} style={{minWidth: 120}}>
+              <option value="">All categories</option>
+              {categories.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <input value={wlSearch} onChange={e => setWlSearch(e.target.value)} placeholder="Search wordlists..." style={{flex: 1, minWidth: 150}} />
+          </div>
+          <div style={{maxHeight: 300, overflowY: "auto", border: "1px solid var(--c-border, #333)", borderRadius: 4}}>
+            <table className="findings-table" style={{fontSize: "0.78rem"}}>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Category</th>
+                  <th style={{textAlign: "right"}}>Lines</th>
+                  <th>Path</th>
+                </tr>
+              </thead>
+              <tbody>
+                {wordlists.map(w => (
+                  <tr key={w.path}>
+                    <td style={{fontWeight: 500}}>{w.name}</td>
+                    <td><span className="badge">{w.category}</span></td>
+                    <td style={{textAlign: "right"}}>{w.lines.toLocaleString()}</td>
+                    <td style={{fontSize: "0.72rem", color: "var(--c-text-muted, #888)"}}><code>{w.relative}</code></td>
+                  </tr>
+                ))}
+                {wordlists.length === 0 && (
+                  <tr><td colSpan={4} className="muted" style={{textAlign: "center", padding: 16}}>No wordlists found. Install SecLists or add a directory.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {msg && <pre className="panel-msg">{msg}</pre>}
     </div>
   );
 }

@@ -977,6 +977,50 @@ def api_plugins_update_all() -> dict[str, Any]:
     return {"ok": True, "updated": results, "plugins": list_plugins()}
 
 
+# --- Wordlist endpoints ---
+
+
+class WordlistDirBody(BaseModel):
+    path: str
+
+
+@api.get("/wordlists")
+def api_wordlists(
+    category: str | None = Query(default=None),
+    search: str | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=2000),
+) -> dict[str, Any]:
+    from gossamer.wordlists import discover_wordlists
+    wls = discover_wordlists(category=category, search=search, limit=limit)
+    return {"wordlists": wls, "count": len(wls)}
+
+
+@api.get("/wordlists/dirs")
+def api_wordlist_dirs() -> dict[str, Any]:
+    from gossamer.wordlists import get_search_dirs
+    dirs = get_search_dirs()
+    existing = [{"path": d, "exists": Path(d).is_dir()} for d in dirs]
+    return {"dirs": existing}
+
+
+@api.post("/wordlists/dirs")
+def api_wordlist_dir_add(body: WordlistDirBody) -> dict[str, Any]:
+    from gossamer.wordlists import add_search_dir
+    return add_search_dir(body.path)
+
+
+@api.delete("/wordlists/dirs")
+def api_wordlist_dir_remove(body: WordlistDirBody) -> dict[str, Any]:
+    from gossamer.wordlists import remove_search_dir
+    return remove_search_dir(body.path)
+
+
+@api.post("/wordlists/install-seclists")
+def api_install_seclists() -> dict[str, Any]:
+    from gossamer.wordlists import install_seclists
+    return install_seclists()
+
+
 @api.get("/findings/summary")
 def api_findings_summary(
     store: Annotated[GraphStore, Depends(get_store)],
