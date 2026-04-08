@@ -1537,3 +1537,8 @@ button.ghost-inline:hover:not(:disabled) {
 .raw-sql-input { width: 100%; padding: 8px; background: var(--bg-alt, #111); border: 1px solid var(--border); border-radius: 4px; color: var(--fg); font-family: monospace; font-size: 0.8rem; resize: vertical; }
 .raw-history { display: flex; flex-direction: column; gap: 2px; max-height: 120px; overflow-y: auto; }
 .raw-history-item { text-align: left; font-family: monospace; font-size: 0.72rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* --- Graph Visual Polish --- */
+.graph-legend { position: absolute; bottom: 12px; left: 12px; background: var(--bg-card, #1a1a1a); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font-size: 0.75rem; z-index: 5; min-width: 100px; }
+.graph-legend-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; font-weight: 600; font-size: 0.78rem; }
+.graph-legend-item { display: flex; align-items: center; gap: 6px; padding: 1px 0; }

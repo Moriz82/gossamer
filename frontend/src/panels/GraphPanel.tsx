@@ -133,6 +133,14 @@ function makeStylesheet(ui: UIPrefs): Stylesheet[] {
       },
     },
     {
+      selector: ":selected",
+      style: {
+        "border-width": 3,
+        "border-color": "#7eb8da",
+        "border-opacity": 1,
+      },
+    },
+    {
       selector: ".path-node",
       style: { "border-width": 3, "border-color": "#b8d4e8", "border-opacity": 1, opacity: 1 },
     },
@@ -185,6 +193,7 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi, backendType = 
   const [rawHistory, setRawHistory] = useState<string[]>(() => {
     try { return JSON.parse(localStorage.getItem("gossamer_raw_history") || "[]"); } catch { return []; }
   });
+  const [showLegend, setShowLegend] = useState(true);
 
   const applyStyles = useCallback(() => {
     const cy = cyRef.current;
@@ -363,6 +372,11 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi, backendType = 
       setContextMenu({ x: rp.x + rect.left, y: rp.y + rect.top, nodeId: data.id, nodeLabel: String(data.label || data.kind) });
     });
     cy.on("tap", () => setContextMenu(null));
+    cy.on("tap", (evt) => {
+      if (evt.target === cy) {
+        setSelectedNodes(new Set());
+      }
+    });
 
     return () => {
       cy.destroy();
@@ -430,6 +444,32 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi, backendType = 
     document.addEventListener("keydown", handler);
     document.addEventListener("click", clickHandler);
     return () => { document.removeEventListener("keydown", handler); document.removeEventListener("click", clickHandler); };
+  }, []);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const cy = cyRef.current;
+      if (!cy) return;
+      if (e.key === "Delete" || e.key === "Backspace") {
+        const selected = cy.$(":selected");
+        if (selected.length) {
+          selected.style("display", "none");
+          setStatus(`Hidden ${selected.length} elements`);
+        }
+      }
+      if (e.key === "Escape") {
+        cy.elements().unselect();
+        cy.elements().removeClass("dimmed path-node path-edge");
+        setSelectedNodes(new Set());
+        setContextMenu(null);
+      }
+      if (e.key === "a" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        cy.elements().select();
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
   }, []);
 
   async function showNeighbors(nodeId: string) {
@@ -610,6 +650,9 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi, backendType = 
         <button type="button" className="primary" onClick={onPersistUi}>
           Save UI prefs
         </button>
+        <button type="button" className="ghost" onClick={() => setShowLegend(!showLegend)}>
+          {showLegend ? "Hide legend" : "Legend"}
+        </button>
         <span className="toolbar-status">{status}{graphEmpty ? " (empty)" : ""}</span>
       </div>
       <div className="graph-sidebar">
@@ -750,6 +793,20 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi, backendType = 
           <div className="graph-tooltip" style={{ left: tooltip.x, top: tooltip.y }}>
             <span className="graph-tooltip-kind">{tooltip.kind}</span>
             <span className="graph-tooltip-label">{tooltip.label}</span>
+          </div>
+        )}
+        {showLegend && Object.keys(typeColors).length > 0 && (
+          <div className="graph-legend">
+            <div className="graph-legend-header">
+              <span>Legend</span>
+              <button type="button" className="ghost" onClick={() => setShowLegend(false)}>&times;</button>
+            </div>
+            {Object.entries(typeColors).map(([kind, color]) => (
+              <div key={kind} className="graph-legend-item">
+                <span className="color-swatch" style={{ backgroundColor: color }} />
+                <span>{kind}</span>
+              </div>
+            ))}
           </div>
         )}
       </div>
