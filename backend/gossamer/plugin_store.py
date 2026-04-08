@@ -31,6 +31,7 @@ class PluginManifest:
     ingestor: str = ""  # which ingestor handles output
     default_args: list[str] = field(default_factory=list)
     updatable: bool = True
+    category: str = ""
 
 
 def _registry_path() -> Path:
@@ -94,6 +95,7 @@ def list_plugins() -> list[dict[str, Any]]:
             "binary_path": binary_path,
             "source_repo": p.source_repo,
             "updatable": p.updatable,
+            "category": p.category,
             "update_available": (
                 installed_ver is not None and installed_ver != p.version
             ),
@@ -182,10 +184,10 @@ def install_plugin(plugin_id: str) -> dict[str, Any]:
         meta = {"version": plugin.version, "plugin_id": plugin_id}
         (dest_dir / "meta.json").write_text(json.dumps(meta))
 
-        return {"ok": True, "version": plugin.version, "path": str(binary)}
+        return {"ok": True, "version": plugin.version, "path": str(binary), "plugins": list_plugins()}
     except Exception as e:
         logger.error("Failed to install %s: %s", plugin_id, e)
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": str(e), "plugins": list_plugins()}
 
 
 def update_plugin(plugin_id: str) -> dict[str, Any]:
@@ -198,8 +200,68 @@ def uninstall_plugin(plugin_id: str) -> dict[str, Any]:
     dest_dir = _plugin_dir() / plugin_id
     if dest_dir.exists():
         shutil.rmtree(dest_dir)
-        return {"ok": True}
-    return {"ok": False, "error": "Plugin not installed"}
+        return {"ok": True, "plugins": list_plugins()}
+    return {"ok": False, "error": "Plugin not installed", "plugins": list_plugins()}
+
+
+def check_all_updates() -> list[dict[str, Any]]:
+    """Check GitHub for latest versions of all plugins. Returns update status for each."""
+    import time
+    cache_path = _plugin_dir() / "update_cache.json"
+
+    # Check cache (24h TTL)
+    if cache_path.exists():
+        try:
+            cache = json.loads(cache_path.read_text())
+            if time.time() - cache.get("timestamp", 0) < 86400:
+                return cache.get("results", [])
+        except (json.JSONDecodeError, KeyError):
+            pass
+
+    registry = _load_registry()
+    results = []
+    for p in registry:
+        installed_ver = _installed_version(p.id)
+        latest_ver = p.version  # fallback to registry version
+        try:
+            with httpx.Client(follow_redirects=True, timeout=10) as client:
+                resp = client.get(f"https://api.github.com/repos/{p.source_repo}/releases/latest")
+                if resp.status_code == 200:
+                    data = resp.json()
+                    tag = data.get("tag_name", "")
+                    # Strip leading 'v' from tag
+                    latest_ver = tag.lstrip("v") if tag else p.version
+        except Exception:
+            pass
+
+        results.append({
+            "id": p.id,
+            "name": p.name,
+            "installed_version": installed_ver,
+            "latest_version": latest_ver,
+            "registry_version": p.version,
+            "update_available": installed_ver is not None and installed_ver != latest_ver,
+        })
+
+    # Cache results
+    cache = {"timestamp": time.time(), "results": results}
+    try:
+        cache_path.write_text(json.dumps(cache, indent=2))
+    except Exception:
+        pass
+
+    return results
+
+
+def update_all() -> list[dict[str, Any]]:
+    """Update all plugins that have updates available."""
+    updates = check_all_updates()
+    results = []
+    for u in updates:
+        if u["update_available"]:
+            result = install_plugin(u["id"])
+            results.append({"id": u["id"], **result})
+    return results
 
 
 def get_binary_path(plugin_id: str) -> str | None:

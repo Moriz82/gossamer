@@ -27,10 +27,12 @@ from gossamer.ingestors.catalog import INGESTOR_INFO
 from gossamer.ingestors.registry import all_ingestors
 from gossamer.normalizers.registry import all_normalizer_defs
 from gossamer.plugin_store import (
+    check_all_updates,
     check_status as plugin_check_status,
     install_plugin,
     list_plugins,
     uninstall_plugin,
+    update_all as plugin_update_all,
     update_plugin,
 )
 from gossamer.scanner_runner import run_scanner, stop_scanner
@@ -943,6 +945,20 @@ def api_scan_preset(name: str) -> dict[str, Any]:
     if not preset:
         raise HTTPException(404, f"Unknown preset: {name}")
     return preset
+
+
+# --- Plugin bulk endpoints ---
+
+
+@api.post("/plugins/check-updates")
+def api_plugins_check_updates() -> list[dict[str, Any]]:
+    return check_all_updates()
+
+
+@api.post("/plugins/update-all")
+def api_plugins_update_all() -> dict[str, Any]:
+    results = plugin_update_all()
+    return {"ok": True, "updated": results, "plugins": list_plugins()}
 
 
 app.include_router(api)
