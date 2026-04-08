@@ -35,6 +35,14 @@ from gossamer.plugin_store import (
 )
 from gossamer.scanner_runner import run_scanner, stop_scanner
 from gossamer.pipeline import ingest_and_store
+from gossamer.project import (
+    create_project,
+    delete_project,
+    export_project,
+    import_project,
+    list_projects,
+    open_project,
+)
 from gossamer.queries.builtins import *  # noqa: F401,F403 - register builtins
 from gossamer.queries.registry import all_queries, get_query
 from gossamer.queries.yaml_loader import load_yaml_queries
@@ -64,6 +72,8 @@ def get_store() -> GraphStore:
 async def lifespan(app: FastAPI):
     global _STORE
     s = get_effective_settings()
+    proj = create_project(s.active_project)
+    s.database_path = proj.database_path
     s.database_path.parent.mkdir(parents=True, exist_ok=True)
     s.uploads_dir.mkdir(parents=True, exist_ok=True)
     s.exports_dir.mkdir(parents=True, exist_ok=True)
@@ -699,6 +709,82 @@ def api_scanner_run(
 def api_scanner_stop(plugin_id: str) -> dict[str, Any]:
     """Stop a running scanner."""
     return stop_scanner(plugin_id)
+
+
+
+# --- Project endpoints ---
+
+
+class ProjectCreateBody(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+
+
+class ProjectExportBody(BaseModel):
+    name: str
+    format: str = "zip"
+
+
+@api.get("/projects")
+def api_projects() -> list[dict[str, Any]]:
+    return list_projects()
+
+
+@api.post("/projects")
+def api_project_create(body: ProjectCreateBody) -> dict[str, Any]:
+    proj = create_project(body.name)
+    return {"ok": True, "name": proj.name, "created_at": proj.created_at}
+
+
+@api.delete("/projects/{name}")
+def api_project_delete(name: str) -> dict[str, Any]:
+    try:
+        delete_project(name)
+        return {"ok": True}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+
+
+@api.post("/projects/{name}/activate")
+def api_project_activate(
+    name: str,
+    settings: Annotated[Settings, Depends(get_effective_settings)],
+) -> dict[str, Any]:
+    global _STORE
+    try:
+        proj = open_project(name)
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    if _STORE:
+        _STORE.close()
+    settings.database_path = proj.database_path
+    settings.active_project = name
+    _STORE = create_graph_store(settings)
+    return {"ok": True, "name": name, "database_path": str(proj.database_path)}
+
+
+@api.post("/projects/export")
+def api_project_export(body: ProjectExportBody) -> dict[str, Any]:
+    try:
+        zip_path = export_project(body.name, body.format)
+        return {"ok": True, "path": str(zip_path)}
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+
+
+@api.post("/projects/import")
+async def api_project_import(file: UploadFile = File(...)) -> dict[str, Any]:
+    import tempfile
+    tmp = Path(tempfile.mktemp(suffix=".zip"))
+    try:
+        tmp.write_bytes(await file.read())
+        proj = import_project(tmp)
+        return {"ok": True, "name": proj.name}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 app.include_router(api)
