@@ -1451,3 +1451,8 @@ button.ghost-inline:hover:not(:disabled) {
   font-size: 12px;
   color: var(--c-text-muted);
 }
+
+/* --- Graph Visual Polish --- */
+.graph-legend { position: absolute; bottom: 12px; left: 12px; background: var(--bg-card, #1a1a1a); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font-size: 0.75rem; z-index: 5; min-width: 100px; }
+.graph-legend-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; font-weight: 600; font-size: 0.78rem; }
+.graph-legend-item { display: flex; align-items: center; gap: 6px; padding: 1px 0; }
