@@ -10,6 +10,7 @@ import RegistryPanel from "./panels/RegistryPanel";
 import IngestorsPanel from "./panels/IngestorsPanel";
 import VulnsPanel from "./panels/VulnsPanel";
 import ScannersPanel from "./panels/ScannersPanel";
+import SitemapPanel from "./panels/SitemapPanel";
 
 const UI_DEFAULT: UIPrefs = {
   graph_layout: "cose",
@@ -23,6 +24,7 @@ const UI_DEFAULT: UIPrefs = {
 
 type Tab =
   | "graph"
+  | "sitemap"
   | "operations"
   | "settings"
   | "ingestors"
@@ -47,6 +49,7 @@ const tabGroups = [
     label: "Explore",
     tabs: [
       { id: "graph", label: "Graph" },
+      { id: "sitemap", label: "Sitemap" },
       { id: "vulns", label: "Vulns" },
     ],
   },
@@ -243,6 +246,7 @@ export default function App() {
         {tab === "ingestors" ? <IngestorsPanel /> : null}
         {tab === "queries" ? <QueriesPanel /> : null}
         {tab === "vulns" ? <VulnsPanel /> : null}
+        {tab === "sitemap" ? <SitemapPanel /> : null}
         {tab === "scanners" ? <ScannersPanel /> : null}
         {tab === "data" ? <DataPanel /> : null}
         {tab === "registry" ? <RegistryPanel /> : null}
