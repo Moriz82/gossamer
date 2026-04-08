@@ -75,6 +75,51 @@ def list_responses(
     return entries[offset : offset + limit]
 
 
+def export_responses_as_tree(
+    responses_dir: Path,
+    dest_dir: Path,
+    host_filter: str | None = None,
+) -> int:
+    """Export stored response bodies as a directory tree mirroring URL paths.
+
+    Returns count of files written. Scanners can then run against *dest_dir*.
+    """
+    from urllib.parse import urlparse
+    _SKIP_EXT = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".woff", ".woff2",
+                 ".ttf", ".eot", ".mp4", ".mp3", ".pdf", ".zip", ".tar", ".gz"}
+    written = 0
+    if not responses_dir.exists():
+        return 0
+    for shard_dir in responses_dir.iterdir():
+        if not shard_dir.is_dir() or len(shard_dir.name) != 2:
+            continue
+        for f in shard_dir.glob("*.json"):
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, KeyError):
+                continue
+            url = data.get("url", "")
+            body = data.get("body")
+            status = data.get("status", 0)
+            if not url or not body or not isinstance(status, int) or status >= 400:
+                continue
+            parsed = urlparse(url)
+            if host_filter and parsed.netloc != host_filter and parsed.hostname != host_filter:
+                continue
+            ext = Path(parsed.path).suffix.lower()
+            if ext in _SKIP_EXT:
+                continue
+            rel = parsed.path.lstrip("/") or "index.html"
+            out = dest_dir / rel
+            out.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                out.write_text(body, encoding="utf-8")
+                written += 1
+            except Exception:
+                continue
+    return written
+
+
 def search_responses(
     responses_dir: Path,
     url_pattern: str,

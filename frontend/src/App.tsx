@@ -11,6 +11,7 @@ import IngestorsPanel from "./panels/IngestorsPanel";
 import FindingsPanel from "./panels/FindingsPanel";
 import ScannersPanel from "./panels/ScannersPanel";
 import SitemapPanel from "./panels/SitemapPanel";
+import IntelPanel from "./panels/IntelPanel";
 
 const UI_DEFAULT: UIPrefs = {
   graph_layout: "cose",
@@ -31,6 +32,7 @@ type Tab =
   | "queries"
   | "findings"
   | "scanners"
+  | "intel"
   | "data"
   | "registry";
 
@@ -50,7 +52,7 @@ const tabGroups = [
     tabs: [
       { id: "graph", label: "Graph" },
       { id: "sitemap", label: "Sitemap" },
-      { id: "findings", label: "Findings" },
+      { id: "intel", label: "Intel" },
     ],
   },
   {
@@ -344,7 +346,7 @@ export default function App() {
         {tab === "settings" ? <SettingsPanel onRuntimeUpdated={() => void loadSettings()} /> : null}
         {tab === "ingestors" ? <IngestorsPanel /> : null}
         {tab === "queries" ? <QueriesPanel /> : null}
-        {tab === "findings" ? <FindingsPanel /> : null}
+        {tab === "intel" ? <IntelPanel /> : null}
         {tab === "sitemap" ? <SitemapPanel /> : null}
         {tab === "scanners" ? <ScannersPanel /> : null}
         {tab === "data" ? <DataPanel /> : null}

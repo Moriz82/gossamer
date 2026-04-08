@@ -1663,10 +1663,40 @@ button.ghost-inline:hover:not(:disabled) {
 .findings-tid { font-size: 0.72rem; color: var(--c-text-muted, #888); font-family: monospace; }
 
 /* ============================================
-   Operations panel — two-column layout
+   Operations panel — tabbed layout
    ============================================ */
-.ops-layout { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+.ops-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+.ops-tabs { display: flex; border-bottom: 2px solid var(--c-border, #1e2535); flex-shrink: 0; padding: 0 12px; }
+.ops-tab {
+  padding: 8px 20px; font-size: 0.85rem; font-weight: 600; cursor: pointer;
+  background: none; border: none; color: var(--c-text-muted, #888);
+  border-bottom: 2px solid transparent; margin-bottom: -2px; transition: all 0.15s;
+}
+.ops-tab:hover { color: var(--c-text, #eee); }
+.ops-tab-active { color: var(--c-accent, #5b9bd5); border-bottom-color: var(--c-accent, #5b9bd5); }
+.ops-tab-body { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+
+/* Crawl + Scan tabs: two-column layout */
+.ops-crawl-layout { display: flex; flex: 1; min-height: 0; overflow: hidden; }
 .ops-config { flex: 1; min-width: 300px; overflow-y: auto; padding: 16px 20px 48px; }
+
+/* Fuzz tab: vertical stack */
+.ops-fuzz-layout { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+.ops-fuzz-config { padding: 12px 16px; border-bottom: 1px solid var(--c-border, #1e2535); flex-shrink: 0; }
+.ops-fuzz-row { margin-bottom: 8px; }
+.ops-fuzz-field { display: flex; flex-direction: column; gap: 2px; }
+.ops-fuzz-label { font-size: 0.72rem; font-weight: 600; color: var(--c-text-muted, #888); text-transform: uppercase; letter-spacing: 0.04em; }
+
+/* TTY terminal output */
+.ops-tty {
+  flex: 1; min-height: 0; overflow-y: auto; margin: 0;
+  background: #0a0e14; color: #c5cdd9; font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 0.76rem; line-height: 1.45; padding: 12px 16px;
+  white-space: pre-wrap; word-break: break-all;
+}
+.ops-tty > div { min-height: 1.1em; }
+.ops-tty-empty { color: #3d4656; font-style: italic; }
+
 .ops-resize-handle { width: 5px; cursor: col-resize; background: var(--c-border, #333); flex-shrink: 0; transition: background 0.15s; }
 .ops-resize-handle:hover, .ops-resize-handle:active { background: var(--c-accent, #5b9bd5); }
 .ops-section { border: 1px solid var(--c-border, #333); border-radius: 6px; margin-bottom: 12px; padding: 0; }
@@ -1699,6 +1729,119 @@ button.ghost-inline:hover:not(:disabled) {
 .ops-mod-wl-row { display: flex; align-items: center; gap: 6px; margin-left: 20px; font-size: 0.72rem; }
 .ops-mod-wl-current { color: var(--c-text-muted, #888); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ops-wl-change-btn { font-size: 0.68rem !important; padding: 1px 6px !important; flex-shrink: 0; }
+
+/* Fuzzer filter inputs */
+.ops-fuzzer-filters { display: flex; gap: 6px; flex-wrap: wrap; margin-left: 20px; margin-top: 4px; }
+.ops-filter-field { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 80px; }
+.ops-filter-label { font-size: 0.62rem; color: var(--c-text-muted, #666); text-transform: uppercase; letter-spacing: 0.03em; }
+.ops-filter-input {
+  padding: 2px 6px; font-size: 0.72rem;
+  background: var(--c-input-bg, #080b12); border: 1px solid var(--c-input-border, #1e2535);
+  border-radius: 3px; color: var(--c-text, #eee); width: 100%;
+}
+.ops-filter-input::placeholder { color: var(--c-text-muted, #555); }
+
+/* Skip crawl checkbox */
+.ops-skip-crawl {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 0.78rem; padding: 6px 0; cursor: pointer;
+  color: var(--c-text-dim, #8b95a8);
+}
+
+/* ============================================
+   Intel Panel — attack surface intelligence
+   ============================================ */
+.intel-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+.intel-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 12px 20px; border-bottom: 1px solid var(--c-border, #1e2535); flex-shrink: 0;
+}
+.intel-header-left { display: flex; align-items: baseline; gap: 12px; }
+.intel-title { font-size: 1rem; font-weight: 700; margin: 0; }
+.intel-subtitle { font-size: 0.75rem; color: var(--c-text-muted, #888); }
+.intel-header-actions { display: flex; gap: 8px; }
+.intel-body { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+.intel-techs {
+  width: 320px; flex-shrink: 0; overflow-y: auto; padding: 12px 16px;
+  border-right: 1px solid var(--c-border, #1e2535);
+}
+.intel-suggestions { flex: 1; overflow-y: auto; padding: 12px 16px; }
+.intel-section-head {
+  font-size: 0.78rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--c-text-muted, #888); margin-bottom: 10px;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.intel-empty { font-size: 0.8rem; color: var(--c-text-muted, #666); padding: 20px 0; }
+
+/* Tech cards */
+.intel-tech-card {
+  padding: 8px 10px; margin-bottom: 6px; border-radius: 5px;
+  border: 1px solid var(--c-border, #1e2535); background: var(--c-card-bg, #0d1117);
+}
+.intel-tech-name { font-size: 0.82rem; font-weight: 600; }
+.intel-tech-ver { color: var(--c-accent, #5b9bd5); font-weight: 400; }
+.intel-tech-meta { display: flex; gap: 8px; font-size: 0.68rem; color: var(--c-text-muted, #888); margin-top: 2px; }
+.intel-confidence { font-variant-numeric: tabular-nums; }
+.intel-cve-badge { font-weight: 600; }
+.intel-tech-evidence { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
+.intel-evidence-tag {
+  font-size: 0.62rem; padding: 1px 5px; border-radius: 3px;
+  background: var(--c-input-bg, #080b12); color: var(--c-text-muted, #888);
+  border: 1px solid var(--c-border, #1e2535);
+}
+
+/* Suggestion filters */
+.intel-filters { display: flex; gap: 4px; margin-left: auto; }
+.intel-prio-pill {
+  font-size: 0.65rem; padding: 2px 8px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--prio-color, #666); background: none;
+  color: var(--prio-color, #888); text-transform: capitalize; font-weight: 600;
+}
+.intel-prio-pill.active { background: var(--prio-color, #666); color: #fff; }
+
+/* Suggestion cards */
+.intel-card {
+  padding: 10px 12px; margin-bottom: 8px; border-radius: 6px;
+  border: 1px solid var(--c-border, #1e2535); background: var(--c-card-bg, #0d1117);
+  border-left: 3px solid transparent;
+}
+.intel-card-critical { border-left-color: #dc2626; }
+.intel-card-high { border-left-color: #ea580c; }
+.intel-card-medium { border-left-color: #d97706; }
+.intel-card-low { border-left-color: #2563eb; }
+.intel-card-info { border-left-color: #6b7280; }
+.intel-card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.intel-prio-badge {
+  font-size: 0.6rem; font-weight: 700; text-transform: uppercase;
+  padding: 1px 6px; border-radius: 3px; color: #fff; flex-shrink: 0;
+}
+.intel-card-cat { font-size: 0.65rem; color: var(--c-text-muted, #888); text-transform: uppercase; }
+.intel-card-title { font-size: 0.82rem; font-weight: 600; }
+.intel-card-detail { font-size: 0.76rem; color: var(--c-text-dim, #aaa); margin-bottom: 4px; }
+.intel-card-evidence { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 4px; }
+.intel-card-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.intel-action-btn {
+  font-size: 0.68rem !important; padding: 2px 8px !important;
+  border: 1px solid var(--c-accent, #5b9bd5) !important; color: var(--c-accent, #5b9bd5) !important;
+  border-radius: 3px;
+}
+
+/* Intel tool output */
+.intel-tool-output {
+  position: fixed; bottom: 0; left: 0; right: 0; height: 250px;
+  background: #0a0e14; border-top: 2px solid var(--c-accent, #5b9bd5);
+  display: flex; flex-direction: column; z-index: 50;
+}
+.intel-tool-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 6px 16px; font-size: 0.78rem; font-weight: 600;
+  background: var(--c-card-bg, #0d1117); border-bottom: 1px solid var(--c-border, #1e2535);
+}
+.intel-tool-pre {
+  flex: 1; overflow-y: auto; margin: 0; padding: 8px 16px;
+  font-family: 'JetBrains Mono', monospace; font-size: 0.72rem;
+  color: #c5cdd9; line-height: 1.4;
+}
 
 /* Wordlist picker modal */
 .wl-picker-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 100; display: flex; align-items: center; justify-content: center; }

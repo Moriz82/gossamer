@@ -1,3 +1,4 @@
+"""Ingestor for feroxbuster --json output (newline-delimited JSON)."""
 from __future__ import annotations
 
 import json
@@ -9,15 +10,17 @@ from gossamer.ingestors.registry import register_ingestor
 from gossamer.models import IngestContext, RawEdge, RawNode, RawObservationBatch
 
 
-class FfufJsonIngestor(Ingestor):
-    name = "ffuf_json"
+class FeroxbusterJsonIngestor(Ingestor):
+    name = "feroxbuster_json"
 
     def can_handle(self, path: Path, mime: str | None = None) -> bool:
         if path.suffix.lower() not in (".json", ".jsonl"):
             return False
         try:
-            head = path.read_text(encoding="utf-8", errors="ignore")[:8000]
-            return '"results"' in head and ("ffuf" in head.lower() or "input" in head)
+            head = path.read_text(encoding="utf-8", errors="ignore")[:4000]
+            return '"type"' in head and '"url"' in head and (
+                "ferox" in head.lower() or '"content_length"' in head
+            )
         except OSError:
             return False
 
@@ -32,17 +35,21 @@ class FfufJsonIngestor(Ingestor):
                 source=ctx.source_label,
             )
         )
-        data = json.loads(ctx.path.read_text(encoding="utf-8", errors="ignore"))
-        results = data.get("results") if isinstance(data, dict) else None
-        if not isinstance(results, list):
-            return batch
-        for r in results:
-            if not isinstance(r, dict):
+        for line in ctx.path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                r = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            # Only process response entries (skip log/stats entries)
+            if not isinstance(r, dict) or r.get("type") != "response":
                 continue
             url = r.get("url")
             if not url:
                 continue
-            method = r.get("method")
+            method = r.get("method", "GET")
             if not isinstance(method, str) or not method.strip():
                 method = "GET"
             else:
@@ -69,7 +76,7 @@ class FfufJsonIngestor(Ingestor):
                         "url": str(url),
                         "method": method,
                         "status_code": r.get("status"),
-                        "length": r.get("length"),
+                        "length": r.get("content_length"),
                     },
                     source=ctx.source_label,
                 )
@@ -99,4 +106,4 @@ class FfufJsonIngestor(Ingestor):
         return batch
 
 
-register_ingestor(FfufJsonIngestor())
+register_ingestor(FeroxbusterJsonIngestor())

@@ -121,7 +121,7 @@ class ModuleConfig(BaseModel):
 
 
 class CrawlOptions(BaseModel):
-    seeds_file: str
+    seeds_file: str = ""
     source_label: str = "crawl"
     max_depth: int | None = None
     max_pages: int | None = None
@@ -130,6 +130,88 @@ class CrawlOptions(BaseModel):
     crawl_mode: Literal["crawl_only", "crawl_audit"] = "crawl_only"
     scan_preset: str | None = None
     modules: list[ModuleConfig] | None = None
+    skip_crawl: bool = False
+
+
+def _find_default_wordlist() -> str | None:
+    """Find a reasonable default wordlist for fuzzing."""
+    from gossamer.wordlists import get_search_dirs
+    candidates = [
+        "SecLists/Discovery/Web-Content/common.txt",
+        "SecLists/Discovery/Web-Content/directory-list-2.3-small.txt",
+        "seclists/Discovery/Web-Content/common.txt",
+        "Discovery/Web-Content/common.txt",
+        "Discovery/Web-Content/directory-list-2.3-small.txt",
+        "dirb/common.txt",
+        "dirbuster/directory-list-lowercase-2.3-small.txt",
+    ]
+    for d in get_search_dirs():
+        dp = Path(d)
+        if not dp.is_dir():
+            continue
+        for c in candidates:
+            wl = dp / c
+            if wl.is_file():
+                return str(wl)
+    return None
+
+
+def _cache_new_responses(
+    store: "GraphStore",
+    responses_dir: str | None,
+    progress_q: Any,
+) -> None:
+    """Fetch and cache response bodies for endpoints that don't have one yet."""
+    if not responses_dir:
+        return
+    from gossamer.response_store import save_response
+    conn = store.as_sqlite_connection() if isinstance(store, SqliteGraphStore) else None
+    if not conn:
+        return
+    rows = conn.execute(
+        "SELECT json_extract(properties_json, '$.url') FROM nodes "
+        "WHERE kind='Endpoint' "
+        "AND json_extract(properties_json, '$.url') IS NOT NULL "
+        "AND json_extract(properties_json, '$.response_id') IS NULL"
+    ).fetchall()
+    urls = [r[0] for r in rows if r[0] and r[0].startswith("http")]
+    if not urls:
+        return
+    progress_q.put({"type": "scan_progress", "scanner": "cache",
+                     "phase": "info", "detail": f"Caching {len(urls)} new endpoint responses...",
+                     "pipeline_phase": "fuzz"})
+    import httpx
+    cached = 0
+    with httpx.Client(timeout=10, follow_redirects=True, verify=False) as client:
+        for url in urls[:300]:
+            try:
+                resp = client.get(url)
+                if resp.status_code < 400:
+                    save_response(
+                        Path(responses_dir), url=url, method="GET",
+                        status=resp.status_code,
+                        resp_headers=dict(resp.headers),
+                        body=resp.text,
+                    )
+                    cached += 1
+            except Exception:
+                pass
+    if cached:
+        progress_q.put({"type": "scan_progress", "scanner": "cache",
+                         "phase": "info", "detail": f"Cached {cached} fuzz-discovered responses",
+                         "pipeline_phase": "fuzz"})
+
+
+class ToolRunRequest(BaseModel):
+    tool_id: str
+    targets: list[str]
+    wordlist: str | None = None
+    extra_args: list[str] = Field(default_factory=list)
+
+
+class FetchAndScanRequest(BaseModel):
+    base_url: str
+    scanner_ids: list[str]
 
 
 class SettingsPatchBody(BaseModel):
@@ -422,9 +504,12 @@ def ingest_crawl_stream(
     import queue as _queue
     import threading
 
-    p = Path(body.seeds_file).expanduser()
-    if not p.is_file():
-        raise HTTPException(404, f"not a file: {p}")
+    if body.skip_crawl:
+        p = Path("/dev/null")  # placeholder, won't be used
+    else:
+        p = Path(body.seeds_file).expanduser()
+        if not p.is_file():
+            raise HTTPException(404, f"not a file: {p}")
 
     progress_q: _queue.Queue[dict[str, Any]] = _queue.Queue()
 
@@ -445,13 +530,15 @@ def ingest_crawl_stream(
             extra["audit"] = True
     extra["progress_callback"] = lambda evt: progress_q.put(evt)
 
-    # Pass responses_dir for response storage
+    # Pass responses_dir for response storage (always store — needed for fetch-and-scan)
     try:
         from gossamer.project import open_project
         proj = open_project(settings.active_project)
         extra["responses_dir"] = str(proj.responses_dir)
     except Exception:
-        pass
+        fallback = Path.home() / ".gossamer" / "responses"
+        fallback.mkdir(parents=True, exist_ok=True)
+        extra["responses_dir"] = str(fallback)
 
     def _get_endpoint_urls() -> list[str]:
         """Collect all discovered endpoint URLs from the store."""
@@ -474,25 +561,7 @@ def ingest_crawl_stream(
             return None
         return next((m for m in body.modules if m.id == mod_id and m.enabled), None)
 
-    def _find_default_wordlist() -> str | None:
-        """Find a reasonable default wordlist for fuzzing."""
-        from gossamer.wordlists import get_search_dirs
-        candidates = [
-            "SecLists/Discovery/Web-Content/common.txt",
-            "SecLists/Discovery/Web-Content/directory-list-2.3-small.txt",
-            "seclists/Discovery/Web-Content/common.txt",
-            "dirb/common.txt",
-            "dirbuster/directory-list-lowercase-2.3-small.txt",
-        ]
-        for d in get_search_dirs():
-            dp = Path(d)
-            if not dp.is_dir():
-                continue
-            for c in candidates:
-                wl = dp / c
-                if wl.is_file():
-                    return str(wl)
-        return None
+    # _find_default_wordlist is defined at module level for reuse
 
     def _run_tool(plugin_id: str, targets: list[str], phase_label: str, mod_cfg: ModuleConfig | None = None) -> None:
         ex_args: list[str] = []
@@ -516,9 +585,23 @@ def ingest_crawl_stream(
             ex_args.extend(mod_cfg.extra_args)
 
         def _tool_progress(evt: dict[str, Any]) -> None:
+            phase = evt.get("phase", "running")
+            detail_parts: list[str] = []
+            if phase == "starting" and evt.get("command"):
+                detail_parts = [evt["command"]]
+            elif phase == "finished":
+                detail_parts = [f"{evt.get('lines_total', 0)} total lines, exit {evt.get('exit_code', '?')}, {evt.get('elapsed_seconds', '?')}s"]
+            else:
+                # Scanning phase: show raw output prominently so user can see URLs/sizes
+                if evt.get("output"):
+                    detail_parts.append(evt["output"][:200])
+                if evt.get("lines_processed") is not None:
+                    detail_parts.append(f"#{evt['lines_processed']}")
+                if evt.get("elapsed_seconds") is not None and evt["elapsed_seconds"] > 0:
+                    detail_parts.append(f"{evt['elapsed_seconds']}s")
             progress_q.put({"type": "scan_progress", "scanner": plugin_id,
-                            "phase": evt.get("phase", "running"),
-                            "detail": f"{evt.get('lines_processed', '')} lines, {evt.get('elapsed_seconds', '')}s",
+                            "phase": phase,
+                            "detail": " | ".join(detail_parts) if detail_parts else phase,
                             "pipeline_phase": phase_label})
         try:
             result = run_scanner(plugin_id, targets, extra_args=ex_args if ex_args else None,
@@ -551,11 +634,17 @@ def ingest_crawl_stream(
                         enabled.add("crawl_audit")
 
             # ── Phase 1: CRAWL ──
-            stats = ingest_and_store(
-                store, p, body.source_label, "crawl_seed", settings,
-                extra_options=extra,
-            )
-            progress_q.put({"type": "crawl_complete", **stats})
+            stats: dict[str, int] = {"nodes": 0, "edges": 0}
+            if body.skip_crawl:
+                existing = _get_endpoint_urls()
+                progress_q.put({"type": "crawl_complete", "nodes": 0, "edges": 0,
+                                "skipped": True, "detail": f"Using existing graph data ({len(existing)} endpoints)"})
+            else:
+                stats = ingest_and_store(
+                    store, p, body.source_label, "crawl_seed", settings,
+                    extra_options=extra,
+                )
+                progress_q.put({"type": "crawl_complete", **stats})
 
             # ── Phase 2: FUZZ ──
             fuzzers = [mid for mid in ("ffuf", "feroxbuster") if mid in enabled]
@@ -574,15 +663,28 @@ def ingest_crawl_stream(
                             _run_tool(fid, [base_url], "fuzz", mod_cfg)
                     progress_q.put({"type": "phase_complete", "phase": "fuzz"})
 
+                    # Cache response bodies for fuzz-discovered endpoints
+                    _cache_new_responses(store, extra.get("responses_dir"), progress_q)
+
             # ── Phase 3: SCAN ──
-            scanners = [mid for mid in ("nuclei", "trivy", "gitleaks", "grype", "semgrep") if mid in enabled]
-            if scanners:
+            # Only nuclei scans URLs; trivy/gitleaks/grype/semgrep scan local paths
+            _URL_SCANNERS = {"nuclei"}
+            url_scanners = [mid for mid in ("nuclei",) if mid in enabled]
+            if url_scanners:
                 urls = _get_endpoint_urls()  # Re-fetch — fuzz may have discovered more
                 if urls:
                     progress_q.put({"type": "phase_start", "phase": "scan", "targets": len(urls)})
-                    for sid in scanners:
+                    for sid in url_scanners:
                         _run_tool(sid, urls, "scan", _get_module_cfg(sid))
                     progress_q.put({"type": "phase_complete", "phase": "scan"})
+
+            # Local scanners need a path, not URLs — skip in pipeline mode
+            local_scanners = [mid for mid in ("trivy", "gitleaks", "grype", "semgrep") if mid in enabled]
+            if local_scanners:
+                progress_q.put({"type": "scan_progress", "scanner": "local",
+                                "phase": "info",
+                                "detail": f"Skipping {', '.join(local_scanners)} — these scan local files, not URLs. Use the Scan tab with a local path.",
+                                "pipeline_phase": "scan"})
 
             progress_q.put({"type": "complete", **stats})
         except Exception as exc:
@@ -1113,6 +1215,360 @@ def api_wordlist_dir_remove(body: WordlistDirBody) -> dict[str, Any]:
 def api_install_seclists() -> dict[str, Any]:
     from gossamer.wordlists import install_seclists
     return install_seclists()
+
+
+@api.post("/pipeline/validate")
+def api_pipeline_validate(body: CrawlOptions) -> dict[str, Any]:
+    """Pre-flight validation for pipeline configuration."""
+    errors: list[str] = []
+    if not body.skip_crawl:
+        p = Path(body.seeds_file).expanduser()
+        if not p.is_file():
+            errors.append(f"Seeds file not found: {body.seeds_file}")
+    if body.modules:
+        fuzzers = [m for m in body.modules if m.id in ("ffuf", "feroxbuster") and m.enabled]
+        for fz in fuzzers:
+            if fz.wordlist:
+                if not Path(fz.wordlist).is_file():
+                    errors.append(f"{fz.id}: wordlist not found: {fz.wordlist}")
+            else:
+                if not _find_default_wordlist():
+                    errors.append(
+                        f"{fz.id}: no wordlist configured and no default found. "
+                        "Install SecLists or assign a wordlist."
+                    )
+    return {"ok": len(errors) == 0, "errors": errors}
+
+
+@api.get("/graph/hosts")
+def api_graph_hosts(
+    store: Annotated[GraphStore, Depends(get_store)],
+) -> dict[str, Any]:
+    """Return distinct base URLs (scheme://host) from graph endpoints."""
+    from urllib.parse import urlparse as _up
+    if not isinstance(store, SqliteGraphStore):
+        return {"hosts": []}
+    conn = store.as_sqlite_connection()
+    urls = [
+        r[0] for r in conn.execute(
+            "SELECT DISTINCT json_extract(properties_json, '$.url') "
+            "FROM nodes WHERE kind='Endpoint' "
+            "AND json_extract(properties_json, '$.url') IS NOT NULL"
+        ).fetchall() if r[0]
+    ]
+    bases = sorted({f"{_up(u).scheme}://{_up(u).netloc}" for u in urls if u and "://" in u})
+    return {"hosts": bases}
+
+
+@api.get("/technologies")
+def api_technologies(
+    store: Annotated[GraphStore, Depends(get_store)],
+) -> dict[str, Any]:
+    """List all detected technologies with CVE counts."""
+    if not isinstance(store, SqliteGraphStore):
+        return {"technologies": []}
+    conn = store.as_sqlite_connection()
+    rows = conn.execute(
+        "SELECT key, properties_json FROM nodes WHERE kind='Technology'"
+    ).fetchall()
+    techs = []
+    for key, props_json in rows:
+        props = json.loads(props_json) if props_json else {}
+        techs.append({
+            "key": key,
+            "name": props.get("name", ""),
+            "version": props.get("version"),
+            "confidence": props.get("confidence", 0),
+            "categories": props.get("categories", []),
+            "cpe": props.get("cpe"),
+            "evidence": props.get("evidence", []),
+            "known_cves": props.get("known_cves", []),
+        })
+    techs.sort(key=lambda t: (-t["confidence"], t["name"]))
+    return {"technologies": techs}
+
+
+@api.get("/technologies/{tech_name}/cves")
+def api_tech_cves(tech_name: str, version: str = "") -> dict[str, Any]:
+    """Look up CVEs for a technology. Uses cached results when available."""
+    from gossamer.cve_lookup import lookup_cves
+    entries = lookup_cves(tech_name, version)
+    return {
+        "tech_name": tech_name,
+        "version": version,
+        "cves": [e.to_dict() for e in entries],
+        "count": len(entries),
+    }
+
+
+@api.post("/technologies/enrich")
+def api_enrich_technologies(
+    store: Annotated[GraphStore, Depends(get_store)],
+) -> dict[str, Any]:
+    """Enrich all Technology nodes with CVE data. Returns count of CVEs found."""
+    from gossamer.cve_lookup import lookup_cves
+    if not isinstance(store, SqliteGraphStore):
+        return {"ok": False, "error": "SQLite store required"}
+    conn = store.as_sqlite_connection()
+    rows = conn.execute(
+        "SELECT id, key, properties_json FROM nodes WHERE kind='Technology'"
+    ).fetchall()
+    total_cves = 0
+    enriched = 0
+    for node_id, key, props_json in rows:
+        props = json.loads(props_json) if props_json else {}
+        name = props.get("name", "")
+        version = props.get("version", "")
+        cpe = props.get("cpe")
+        if not name:
+            continue
+        # Skip if already enriched recently
+        if props.get("known_cves") is not None:
+            continue
+        entries = lookup_cves(name, version or "", cpe)
+        cve_list = [e.to_dict() for e in entries[:20]]  # Cap per-tech
+        props["known_cves"] = cve_list
+        props["cve_count"] = len(cve_list)
+        conn.execute(
+            "UPDATE nodes SET properties_json=? WHERE id=?",
+            (json.dumps(props), node_id),
+        )
+        total_cves += len(cve_list)
+        enriched += 1
+    conn.commit()
+    return {"ok": True, "technologies_enriched": enriched, "total_cves": total_cves}
+
+
+@api.get("/suggestions")
+def api_suggestions(
+    store: Annotated[GraphStore, Depends(get_store)],
+) -> dict[str, Any]:
+    """Generate and return attack surface suggestions."""
+    from gossamer.suggestions import generate_suggestions
+    if not isinstance(store, SqliteGraphStore):
+        return {"suggestions": [], "counts": {}}
+    conn = store.as_sqlite_connection()
+    suggestions = generate_suggestions(conn)
+    counts = {}
+    for s in suggestions:
+        counts[s.priority] = counts.get(s.priority, 0) + 1
+    return {
+        "suggestions": [s.to_dict() for s in suggestions],
+        "counts": counts,
+        "total": len(suggestions),
+    }
+
+
+
+@api.post("/tools/run")
+def api_tools_run(
+    body: ToolRunRequest,
+    store: Annotated[GraphStore, Depends(get_store)],
+    settings: Annotated[Settings, Depends(get_effective_settings)],
+) -> StreamingResponse:
+    """SSE endpoint that runs a single tool with raw output streaming."""
+    import queue as _queue
+    import threading
+
+    progress_q: _queue.Queue[dict[str, Any]] = _queue.Queue()
+
+    def _run() -> None:
+        try:
+            ex_args: list[str] = list(body.extra_args)
+            if body.wordlist:
+                ex_args = ["-w", body.wordlist] + ex_args
+            elif body.tool_id in ("ffuf", "feroxbuster"):
+                wl = _find_default_wordlist()
+                if wl:
+                    ex_args = ["-w", wl] + ex_args
+                else:
+                    progress_q.put({"type": "error", "detail": "No wordlist found. Install SecLists or specify a wordlist."})
+                    return
+
+            def _raw_cb(evt: dict[str, Any]) -> None:
+                progress_q.put(evt)
+
+            result = run_scanner(
+                body.tool_id, body.targets,
+                extra_args=ex_args if ex_args else None,
+                progress_cb=_raw_cb,
+                timeout=1800,
+                raw_output=True,
+            )
+            if result.get("ok") and result.get("output_file"):
+                try:
+                    scan_stats = ingest_and_store(
+                        store, Path(result["output_file"]),
+                        f"fuzz_{body.tool_id}", result.get("ingestor"), settings,
+                    )
+                    Path(result["output_file"]).unlink(missing_ok=True)
+                    progress_q.put({"type": "complete", "ingested": scan_stats, **result})
+                except Exception as ie:
+                    progress_q.put({"type": "complete", "ingest_error": str(ie), **result})
+            else:
+                progress_q.put({"type": "complete", **result})
+        except Exception as exc:
+            progress_q.put({"type": "error", "detail": str(exc)})
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+
+    def event_stream():
+        while True:
+            try:
+                evt = progress_q.get(timeout=120)
+            except _queue.Empty:
+                yield "data: {\"type\": \"heartbeat\"}\n\n"
+                continue
+            yield f"data: {json.dumps(evt)}\n\n"
+            if evt.get("type") in ("complete", "error"):
+                break
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@api.post("/scan/fetch-and-scan")
+def api_fetch_and_scan(
+    body: FetchAndScanRequest,
+    store: Annotated[GraphStore, Depends(get_store)],
+    settings: Annotated[Settings, Depends(get_effective_settings)],
+) -> StreamingResponse:
+    """Download content from a web target and run local scanners against it."""
+    import queue as _queue
+    import shutil
+    import tempfile
+    import threading
+    from urllib.parse import urlparse as _up
+
+    import httpx
+
+    progress_q: _queue.Queue[dict[str, Any]] = _queue.Queue()
+
+    def _run() -> None:
+        tmpdir = None
+        try:
+            parsed = _up(body.base_url)
+            host = parsed.netloc or parsed.hostname or "target"
+
+            # 1. Try to export already-stored responses (from crawl) — instant, no network
+            tmpdir = tempfile.mkdtemp(prefix="gossamer_scan_")
+            exported = 0
+            try:
+                from gossamer.response_store import export_responses_as_tree
+                # Try project responses dir, then fallback
+                responses_dir = None
+                try:
+                    from gossamer.project import open_project
+                    proj = open_project(settings.active_project)
+                    responses_dir = proj.responses_dir
+                except Exception:
+                    fallback = Path.home() / ".gossamer" / "responses"
+                    if fallback.exists():
+                        responses_dir = fallback
+                if responses_dir:
+                    progress_q.put({"type": "status", "detail": f"Exporting cached responses for {host}..."})
+                    exported = export_responses_as_tree(responses_dir, Path(tmpdir), host_filter=host)
+            except Exception:
+                pass
+
+            if exported > 0:
+                progress_q.put({"type": "status", "detail": f"Exported {exported} files from crawl cache (no re-download needed)"})
+            else:
+                # 2. No cached responses — download from target
+                progress_q.put({"type": "status", "detail": f"No cached responses. Downloading from {host}..."})
+                conn = store.as_sqlite_connection() if isinstance(store, SqliteGraphStore) else None
+                paths: list[str] = []
+                if conn:
+                    rows = conn.execute(
+                        "SELECT json_extract(properties_json, '$.url') FROM nodes "
+                        "WHERE kind='Endpoint' AND json_extract(properties_json, '$.url') LIKE ?",
+                        (f"%{host}%",),
+                    ).fetchall()
+                    paths = [r[0] for r in rows if r[0]]
+
+                if not paths:
+                    progress_q.put({"type": "complete", "ok": False, "error": "No endpoints in graph. Run a crawl first."})
+                    return
+
+                _SKIP_EXT = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".woff", ".woff2",
+                             ".ttf", ".eot", ".mp4", ".mp3", ".pdf", ".zip", ".tar", ".gz"}
+                interesting = [u for u in paths if Path(_up(u).path).suffix.lower() not in _SKIP_EXT]
+                total = min(len(interesting), 500)
+                progress_q.put({"type": "status", "detail": f"Downloading {total} files..."})
+
+                downloaded = 0
+                errors = 0
+                with httpx.Client(timeout=10, follow_redirects=True, verify=False) as client:
+                    for idx, url in enumerate(interesting[:500]):
+                        try:
+                            p = _up(url)
+                            rel = p.path.lstrip("/") or "index.html"
+                            local_path = Path(tmpdir) / rel
+                            local_path.parent.mkdir(parents=True, exist_ok=True)
+                            resp = client.get(url)
+                            if resp.status_code < 400:
+                                local_path.write_bytes(resp.content)
+                                downloaded += 1
+                        except Exception:
+                            errors += 1
+                        if (idx + 1) % 5 == 0 or idx == total - 1:
+                            progress_q.put({"type": "status",
+                                            "detail": f"Downloading [{idx + 1}/{total}] — {downloaded} saved, {errors} errors"})
+
+                exported = downloaded
+                if exported == 0:
+                    progress_q.put({"type": "complete", "ok": False, "error": "No files downloaded"})
+                    return
+
+            # 4. Run each scanner against the temp directory
+            for sid in body.scanner_ids:
+                progress_q.put({"type": "scanner_start", "scanner": sid})
+                try:
+                    result = run_scanner(sid, [tmpdir], timeout=600, raw_output=False,
+                                         progress_cb=lambda evt, _sid=sid: progress_q.put(
+                                             {"type": "scanner_progress", "scanner": _sid, **evt}))
+                    if result.get("ok") and result.get("output_file"):
+                        try:
+                            scan_stats = ingest_and_store(
+                                store, Path(result["output_file"]),
+                                f"webscan_{sid}", result.get("ingestor"), settings,
+                            )
+                            Path(result["output_file"]).unlink(missing_ok=True)
+                            progress_q.put({"type": "scanner_done", "scanner": sid,
+                                            "ingested": scan_stats})
+                        except Exception as ie:
+                            progress_q.put({"type": "scanner_done", "scanner": sid,
+                                            "error": str(ie)})
+                    else:
+                        err = result.get("error") or result.get("last_output") or "no output"
+                        progress_q.put({"type": "scanner_done", "scanner": sid,
+                                        "exit_code": result.get("exit_code"),
+                                        "error": err if not result.get("ok") else None})
+                except Exception as e:
+                    progress_q.put({"type": "scanner_done", "scanner": sid, "error": str(e)})
+
+            progress_q.put({"type": "complete", "ok": True, "files": exported})
+        except Exception as exc:
+            progress_q.put({"type": "error", "detail": str(exc)})
+        finally:
+            if tmpdir:
+                shutil.rmtree(tmpdir, ignore_errors=True)
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+
+    def event_stream():
+        while True:
+            try:
+                evt = progress_q.get(timeout=120)
+            except _queue.Empty:
+                yield "data: {\"type\": \"heartbeat\"}\n\n"
+                continue
+            yield f"data: {json.dumps(evt)}\n\n"
+            if evt.get("type") in ("complete", "error"):
+                break
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @api.get("/findings/summary")

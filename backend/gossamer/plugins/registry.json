@@ -131,7 +131,7 @@
         "linux_amd64": "ffuf_2.1.0_linux_amd64.tar.gz",
         "linux_arm64": "ffuf_2.1.0_linux_arm64.tar.gz"
       },
-      "ingestor": "",
+      "ingestor": "ffuf_json",
       "default_args": ["-mc", "200,204,301,302,307,401,403"],
       "updatable": true
     },
@@ -151,7 +151,7 @@
         "linux_amd64": "x86_64-linux-feroxbuster.zip",
         "linux_arm64": "aarch64-linux-feroxbuster.zip"
       },
-      "ingestor": "",
+      "ingestor": "feroxbuster_json",
       "default_args": ["--silent", "--json"],
       "updatable": true
     }

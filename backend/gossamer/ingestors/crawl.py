@@ -363,6 +363,54 @@ class CrawlIngestor(Ingestor):
                     if intel.host_tech_hints:
                         host_props.update(intel.host_tech_hints)
 
+                # Technology fingerprinting
+                try:
+                    from gossamer.fingerprint import fingerprint_response
+                    cookies_dict = {}
+                    if result.headers:
+                        for sc in result.headers.get("set-cookie", "").split(","):
+                            if "=" in sc:
+                                ck_name = sc.split("=")[0].strip()
+                                ck_val = sc.split("=", 1)[1].split(";")[0].strip()
+                                cookies_dict[ck_name] = ck_val
+                    tech_matches = fingerprint_response(
+                        url=canon,
+                        headers=result.headers or {},
+                        body=result.body,
+                        cookies=cookies_dict,
+                    )
+                    tech_names = []
+                    for tm in tech_matches:
+                        tech_key = f"{tm.name}|{tm.version or ''}"
+                        tech_label = f"{tm.name}/{tm.version}" if tm.version else tm.name
+                        tech_names.append(tech_label)
+                        batch.nodes.append(RawNode(
+                            kind="Technology", key=tech_key,
+                            properties={
+                                "name": tm.name, "version": tm.version,
+                                "confidence": tm.confidence,
+                                "categories": tm.categories,
+                                "cpe": tm.cpe, "website": tm.website,
+                                "evidence": tm.evidence,
+                            },
+                            source=ctx.source_label,
+                        ))
+                        batch.edges.append(RawEdge(
+                            kind="runs", src_kind="Host", src_key=host_key,
+                            dst_kind="Technology", dst_key=tech_key,
+                            properties={}, source=ctx.source_label,
+                        ))
+                        batch.edges.append(RawEdge(
+                            kind="detected_on", src_kind="Technology", src_key=tech_key,
+                            dst_kind="Endpoint", dst_key=ep_key,
+                            properties={"evidence": tm.evidence},
+                            source=ctx.source_label,
+                        ))
+                    if tech_names:
+                        props["technologies"] = tech_names
+                except Exception as fp_err:
+                    logger.debug("Fingerprint error for %s: %s", canon, fp_err)
+
                 batch.nodes.append(
                     RawNode(
                         kind="Host",
