@@ -46,7 +46,7 @@ from gossamer.project import (
     open_project,
 )
 from gossamer.response_store import get_response, list_responses, search_responses
-from gossamer.graph_queries.library import get_graph_query, list_graph_queries
+from gossamer.graph_queries.library import get_graph_query, list_graph_queries, list_graph_queries_with_counts
 from gossamer.graph_queries.builder import run_visual_query, run_raw_sql
 from gossamer.scan_presets import get_preset, list_presets, resolve_scanners
 from gossamer.queries.builtins import *  # noqa: F401,F403 - register builtins
@@ -902,8 +902,10 @@ class RawQueryBody(BaseModel):
 
 
 @api.get("/graph/queries")
-def api_graph_queries() -> list[dict[str, str]]:
-    return list_graph_queries()
+def api_graph_queries(
+    store: Annotated[GraphStore, Depends(get_store)],
+) -> list[dict[str, Any]]:
+    return list_graph_queries_with_counts(store)
 
 
 @api.post("/graph/queries/{name}/run")

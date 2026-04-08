@@ -140,6 +140,50 @@ def check_status(plugin_id: str) -> dict[str, Any]:
     }
 
 
+def _resolve_download(plugin: PluginManifest, pk: str) -> tuple[str, str, str]:
+    """Query GitHub API for latest release and find the matching asset.
+
+    Returns (download_url, asset_name, version).
+    """
+    # Build a pattern from the registry asset name by replacing the version
+    registry_asset = plugin.platforms.get(pk, "")
+
+    try:
+        with httpx.Client(follow_redirects=True, timeout=15) as client:
+            resp = client.get(
+                f"https://api.github.com/repos/{plugin.source_repo}/releases/latest",
+                headers={"Accept": "application/vnd.github+json"},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                tag = data.get("tag_name", "")
+                version = tag.lstrip("v") if tag else plugin.version
+                # Try to find an asset matching our platform pattern
+                # Replace old version in the registry asset name with the new version
+                expected_asset = registry_asset.replace(plugin.version, version)
+                for asset in data.get("assets", []):
+                    name = asset.get("name", "")
+                    if name == expected_asset:
+                        return asset["browser_download_url"], name, version
+                # Fallback: search by platform keywords
+                pk_parts = pk.split("_")  # e.g. ["darwin", "arm64"]
+                for asset in data.get("assets", []):
+                    name = asset.get("name", "").lower()
+                    if all(part in name for part in pk_parts) and (
+                        name.endswith(".zip") or name.endswith(".tar.gz") or name.endswith(".tgz")
+                    ):
+                        return asset["browser_download_url"], asset["name"], version
+    except Exception:
+        pass
+
+    # Final fallback: use registry version with /releases/download/v{ver}/
+    return (
+        f"https://github.com/{plugin.source_repo}/releases/download/v{plugin.version}/{registry_asset}",
+        registry_asset,
+        plugin.version,
+    )
+
+
 def install_plugin(plugin_id: str) -> dict[str, Any]:
     """Download and install a plugin from GitHub releases."""
     registry = _load_registry()
@@ -148,14 +192,10 @@ def install_plugin(plugin_id: str) -> dict[str, Any]:
         return {"ok": False, "error": f"Unknown plugin: {plugin_id}"}
 
     pk = _platform_key()
-    asset_name = plugin.platforms.get(pk)
-    if not asset_name:
+    if not plugin.platforms.get(pk):
         return {"ok": False, "error": f"No binary available for platform {pk}"}
 
-    download_url = (
-        f"https://github.com/{plugin.source_repo}"
-        f"/releases/latest/download/{asset_name}"
-    )
+    download_url, asset_name, version = _resolve_download(plugin, pk)
     dest_dir = _plugin_dir() / plugin.id
     dest_dir.mkdir(parents=True, exist_ok=True)
 
@@ -181,10 +221,10 @@ def install_plugin(plugin_id: str) -> dict[str, Any]:
         if binary.exists():
             binary.chmod(0o755)
 
-        meta = {"version": plugin.version, "plugin_id": plugin_id}
+        meta = {"version": version, "plugin_id": plugin_id}
         (dest_dir / "meta.json").write_text(json.dumps(meta))
 
-        return {"ok": True, "version": plugin.version, "path": str(binary), "plugins": list_plugins()}
+        return {"ok": True, "version": version, "path": str(binary), "plugins": list_plugins()}
     except Exception as e:
         logger.error("Failed to install %s: %s", plugin_id, e)
         return {"ok": False, "error": str(e), "plugins": list_plugins()}

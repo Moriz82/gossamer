@@ -255,7 +255,7 @@ export default function GraphPanel({ ui, onUiChange, backendType = "sqlite" }: P
   const [pathEnd, setPathEnd] = useState<{id: string; label: string} | null>(null);
   const [contextMenu, setContextMenu] = useState<{x: number; y: number; nodeId: string; nodeLabel: string} | null>(null);
   const [sidebarTab, setSidebarTab] = useState<"queries" | "filters" | "path">("queries");
-  const [graphQueries, setGraphQueries] = useState<{name: string; description: string; category: string}[]>([]);
+  const [graphQueries, setGraphQueries] = useState<{name: string; description: string; category: string; count: number}[]>([]);
   const [querySearch, setQuerySearch] = useState("");
   const [activeQuery, setActiveQuery] = useState<string | null>(null);
   const [queryLoading, setQueryLoading] = useState(false);
@@ -699,7 +699,10 @@ export default function GraphPanel({ ui, onUiChange, backendType = "sqlite" }: P
                       className={`bh-query ${activeQuery === q.name ? "active" : ""}`}
                       onClick={() => { void runQuery(q.name); setDrawerOpen(false); }}
                       disabled={queryLoading}>
-                      <span className="bh-query-name">{q.name.replace(/_/g, " ")}</span>
+                      <span className="bh-query-row">
+                        <span className="bh-query-name">{q.name.replace(/_/g, " ")}</span>
+                        <span className="badge bh-query-count">{q.count}</span>
+                      </span>
                       <span className="bh-query-desc">{q.description}</span>
                     </button>
                   ))}

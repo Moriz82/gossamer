@@ -337,5 +337,48 @@ def list_graph_queries() -> list[dict[str, str]]:
     return [{"name": q.name, "description": q.description, "category": q.category} for q in _ALL_QUERIES]
 
 
+# SQL snippets to get node counts per query (cheap — no edge fetch)
+_COUNT_SQL: dict[str, str] = {
+    "all_hosts": "SELECT COUNT(*) FROM nodes WHERE kind='Host'",
+    "all_endpoints": "SELECT COUNT(*) FROM nodes WHERE kind IN ('Host','Endpoint')",
+    "external_hosts": "SELECT COUNT(*) FROM nodes n WHERE n.kind='Host' AND n.id NOT IN (SELECT DISTINCT e.src_id FROM edges e WHERE e.kind='serves' AND e.dst_id IN (SELECT n2.id FROM nodes n2 WHERE n2.kind='Endpoint' AND json_extract(n2.properties_json, '$.status_code') IS NOT NULL))",
+    "forms_post": "SELECT COUNT(*) FROM nodes WHERE kind='Form' AND json_extract(properties_json, '$.method')='POST'",
+    "all_findings": "SELECT COUNT(*) FROM nodes WHERE kind='Finding' AND json_extract(properties_json, '$.template_id') NOT IN ('missing_security_headers','server_version_disclosure','insecure_cookie')",
+    "critical_high_findings": "SELECT COUNT(*) FROM nodes WHERE kind='Finding' AND json_extract(properties_json, '$.severity') IN ('critical','high')",
+    "findings_by_scanner": "SELECT COUNT(*) FROM nodes WHERE kind='Finding'",
+    "endpoints_with_findings": "SELECT COUNT(DISTINCT n.id) FROM nodes n JOIN edges e ON (e.dst_id = n.id AND e.kind='found_on') WHERE n.kind='Endpoint'",
+    "redirect_chains": "SELECT COUNT(*) FROM edges WHERE kind='redirects_to'",
+    "host_endpoint_finding_paths": "SELECT COUNT(*) FROM nodes WHERE kind IN ('Host','Endpoint','Finding') AND (kind != 'Finding' OR json_extract(properties_json, '$.template_id') NOT IN ('missing_security_headers','server_version_disclosure','insecure_cookie'))",
+    "missing_security_headers": "SELECT COUNT(*) FROM nodes WHERE kind='Finding' AND json_extract(properties_json, '$.template_id')='missing_security_headers'",
+    "sensitive_paths": "SELECT COUNT(*) FROM nodes WHERE kind='Finding' AND json_extract(properties_json, '$.template_id')='sensitive_path'",
+    "login_forms": "SELECT COUNT(*) FROM nodes WHERE kind='Form' AND json_extract(properties_json, '$.input_fields') LIKE '%password%'",
+    "file_upload_forms": "SELECT COUNT(*) FROM nodes WHERE kind='Form' AND json_extract(properties_json, '$.input_fields') LIKE '%file%'",
+    "api_endpoints": "SELECT COUNT(*) FROM nodes WHERE kind='Endpoint' AND (json_extract(properties_json, '$.content_type') LIKE '%json%' OR json_extract(properties_json, '$.url') LIKE '%/api/%')",
+    "admin_paths": "SELECT COUNT(*) FROM nodes WHERE kind='Endpoint' AND (json_extract(properties_json, '$.url') LIKE '%/admin%' OR json_extract(properties_json, '$.url') LIKE '%/manage%' OR json_extract(properties_json, '$.url') LIKE '%/dashboard%')",
+    "server_errors": "SELECT COUNT(*) FROM nodes WHERE kind='Endpoint' AND CAST(json_extract(properties_json, '$.status_code') AS INTEGER) >= 500",
+    "cors_wildcard": "SELECT COUNT(*) FROM nodes WHERE kind='Finding' AND json_extract(properties_json, '$.template_id')='cors_wildcard'",
+}
+
+
+def list_graph_queries_with_counts(store: Any) -> list[dict[str, Any]]:
+    """List queries with node/edge counts from the store."""
+    conn = None
+    try:
+        conn = store.as_sqlite_connection()
+    except Exception:
+        pass
+    result = []
+    for q in _ALL_QUERIES:
+        count = 0
+        if conn and q.name in _COUNT_SQL:
+            try:
+                row = conn.execute(_COUNT_SQL[q.name]).fetchone()
+                count = row[0] if row else 0
+            except Exception:
+                pass
+        result.append({"name": q.name, "description": q.description, "category": q.category, "count": count})
+    return result
+
+
 def get_graph_query(name: str) -> GraphQuery | None:
     return _QUERY_MAP.get(name)

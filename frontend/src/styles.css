@@ -1590,7 +1590,9 @@ button.ghost-inline:hover:not(:disabled) {
 .bh-query { display: flex; flex-direction: column; width: 100%; text-align: left; padding: 5px 12px 5px 20px; background: transparent; border: none; cursor: pointer; color: var(--c-text, #eee); gap: 1px; border-left: 2px solid transparent; }
 .bh-query:hover { background: rgba(255,255,255,0.04); }
 .bh-query.active { border-left-color: var(--c-accent, #5b9bd5); background: rgba(91,155,213,0.08); }
+.bh-query-row { display: flex; align-items: center; justify-content: space-between; width: 100%; }
 .bh-query-name { font-size: 0.8rem; text-transform: capitalize; }
+.bh-query-count { font-size: 0.68rem; min-width: 20px; text-align: center; }
 .bh-query-desc { font-size: 0.68rem; color: var(--c-text-muted, #888); }
 
 /* Path finder */
