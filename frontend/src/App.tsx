@@ -8,7 +8,7 @@ import QueriesPanel from "./panels/QueriesPanel";
 import DataPanel from "./panels/DataPanel";
 import RegistryPanel from "./panels/RegistryPanel";
 import IngestorsPanel from "./panels/IngestorsPanel";
-import VulnsPanel from "./panels/VulnsPanel";
+import FindingsPanel from "./panels/FindingsPanel";
 import ScannersPanel from "./panels/ScannersPanel";
 import SitemapPanel from "./panels/SitemapPanel";
 
@@ -29,7 +29,7 @@ type Tab =
   | "settings"
   | "ingestors"
   | "queries"
-  | "vulns"
+  | "findings"
   | "scanners"
   | "data"
   | "registry";
@@ -50,7 +50,7 @@ const tabGroups = [
     tabs: [
       { id: "graph", label: "Graph" },
       { id: "sitemap", label: "Sitemap" },
-      { id: "vulns", label: "Vulns" },
+      { id: "findings", label: "Findings" },
     ],
   },
   {
@@ -344,7 +344,7 @@ export default function App() {
         {tab === "settings" ? <SettingsPanel onRuntimeUpdated={() => void loadSettings()} /> : null}
         {tab === "ingestors" ? <IngestorsPanel /> : null}
         {tab === "queries" ? <QueriesPanel /> : null}
-        {tab === "vulns" ? <VulnsPanel /> : null}
+        {tab === "findings" ? <FindingsPanel /> : null}
         {tab === "sitemap" ? <SitemapPanel /> : null}
         {tab === "scanners" ? <ScannersPanel /> : null}
         {tab === "data" ? <DataPanel /> : null}

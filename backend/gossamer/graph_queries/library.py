@@ -104,18 +104,20 @@ class FormsWithPost(GraphQuery):
 
 class AllFindings(GraphQuery):
     name = "all_findings"
-    description = "All findings with connected endpoints"
+    description = "All findings (excluding fingerprinting noise)"
     category = "Findings"
     def run(self, store: Any) -> dict[str, Any]:
         conn = store.as_sqlite_connection()
         if conn is None:
             raise RuntimeError("Graph queries require the SQLite backend.")
+        # Exclude low-severity fingerprinting findings from graph
         finding_rows = conn.execute(
-            "SELECT id, kind, key, properties_json FROM nodes WHERE kind='Finding'"
+            "SELECT id, kind, key, properties_json FROM nodes WHERE kind='Finding' "
+            "AND json_extract(properties_json, '$.template_id') NOT IN "
+            "('missing_security_headers','server_version_disclosure','insecure_cookie')"
         ).fetchall()
         finding_nodes = _nodes_from_rows(finding_rows)
         finding_ids = {n["id"] for n in finding_nodes}
-        # Get connected endpoints via found_on edges
         endpoint_ids: set[str] = set()
         if finding_ids:
             ph = ",".join("?" for _ in finding_ids)
@@ -219,11 +221,26 @@ class RedirectChains(GraphQuery):
 
 class HostEndpointFindingPaths(GraphQuery):
     name = "host_endpoint_finding_paths"
-    description = "Host \u2192 Endpoint \u2192 Finding paths"
+    description = "Host \u2192 Endpoint \u2192 Finding paths (excluding noise)"
     category = "Relationships"
     def run(self, store: Any) -> dict[str, Any]:
-        return _run_sql_snapshot(store,
-            "SELECT id, kind, key, properties_json FROM nodes WHERE kind IN ('Host','Endpoint','Finding')")
+        conn = store.as_sqlite_connection()
+        if conn is None:
+            raise RuntimeError("Graph queries require the SQLite backend.")
+        # Get all hosts and endpoints
+        he_rows = conn.execute(
+            "SELECT id, kind, key, properties_json FROM nodes WHERE kind IN ('Host','Endpoint')"
+        ).fetchall()
+        # Get non-fingerprinting findings only
+        f_rows = conn.execute(
+            "SELECT id, kind, key, properties_json FROM nodes WHERE kind='Finding' "
+            "AND json_extract(properties_json, '$.template_id') NOT IN "
+            "('missing_security_headers','server_version_disclosure','insecure_cookie')"
+        ).fetchall()
+        nodes = _nodes_from_rows(he_rows) + _nodes_from_rows(f_rows)
+        node_ids = {n["id"] for n in nodes}
+        edges = _edges_for_node_ids(conn, node_ids)
+        return {"nodes": nodes, "edges": edges}
 
 # --- Attack Surface queries ---
 

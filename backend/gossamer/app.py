@@ -975,6 +975,44 @@ def api_plugins_update_all() -> dict[str, Any]:
     return {"ok": True, "updated": results, "plugins": list_plugins()}
 
 
+@api.get("/findings/summary")
+def api_findings_summary(
+    store: Annotated[GraphStore, Depends(get_store)],
+) -> dict[str, Any]:
+    """Findings grouped by template_id with counts and severity."""
+    if not isinstance(store, SqliteGraphStore):
+        rows = store.list_findings(5000)
+        return {"groups": [], "total": len(rows)}
+    conn = store.as_sqlite_connection()
+    groups = []
+    for r in conn.execute("""
+        SELECT
+            json_extract(properties_json, '$.template_id') as template_id,
+            json_extract(properties_json, '$.name') as name,
+            json_extract(properties_json, '$.severity') as severity,
+            json_extract(properties_json, '$.scanner') as scanner,
+            COUNT(*) as count
+        FROM nodes WHERE kind='Finding'
+        GROUP BY template_id
+        ORDER BY
+            CASE json_extract(properties_json, '$.severity')
+                WHEN 'critical' THEN 0 WHEN 'high' THEN 1
+                WHEN 'medium' THEN 2 WHEN 'low' THEN 3
+                ELSE 4
+            END,
+            count DESC
+    """):
+        groups.append({
+            "template_id": r["template_id"],
+            "name": r["name"],
+            "severity": r["severity"],
+            "scanner": r["scanner"],
+            "count": r["count"],
+        })
+    total = sum(g["count"] for g in groups)
+    return {"groups": groups, "total": total}
+
+
 app.include_router(api)
 
 

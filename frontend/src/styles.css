@@ -1629,3 +1629,29 @@ button.ghost-inline:hover:not(:disabled) {
 .bh-prop { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 0.78rem; gap: 12px; }
 .bh-prop-key { font-weight: 600; color: var(--c-text, #eee); white-space: nowrap; }
 .bh-prop-val { color: var(--c-text-muted, #999); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* --- Inspector Relationships --- */
+.bh-inspector-rels { padding: 0 14px 8px; }
+.bh-rel-group { margin-bottom: 2px; }
+.bh-rel-group summary { list-style: none; cursor: pointer; }
+.bh-rel-group summary::-webkit-details-marker { display: none; }
+.bh-rel-header { display: flex; align-items: center; justify-content: space-between; padding: 4px 0; font-size: 0.78rem; color: var(--c-text-muted, #888); }
+.bh-rel-header::before { content: "\25B8 "; font-size: 0.6rem; margin-right: 4px; }
+.bh-rel-group[open] > .bh-rel-header::before { content: "\25BE "; }
+.bh-rel-node { display: flex; gap: 6px; padding: 2px 0 2px 12px; font-size: 0.75rem; }
+.bh-rel-kind { font-weight: 600; color: var(--c-text-muted, #888); min-width: 55px; }
+.bh-rel-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--c-text, #eee); }
+
+/* --- Findings Panel --- */
+.findings-summary { display: flex; gap: 16px; margin-bottom: 12px; font-size: 0.85rem; }
+.findings-total { font-weight: 600; }
+.findings-groups { color: var(--c-text-muted, #888); }
+.findings-sev-bar { display: flex; gap: 4px; margin-bottom: 12px; flex-wrap: wrap; }
+.findings-table-wrap { overflow-x: auto; }
+.findings-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+.findings-table th { text-align: left; padding: 8px 10px; border-bottom: 2px solid var(--c-border, #333); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--c-text-muted, #888); }
+.findings-table td { padding: 8px 10px; border-bottom: 1px solid var(--c-border, #222); }
+.findings-table tr:hover td { background: rgba(255,255,255,0.02); }
+.findings-sev { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 0.7rem; font-weight: 600; text-transform: uppercase; color: #fff; }
+.findings-name { font-weight: 500; }
+.findings-tid { font-size: 0.72rem; color: var(--c-text-muted, #888); font-family: monospace; }

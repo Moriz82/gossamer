@@ -129,9 +129,14 @@ function makeStylesheet(ui: UIPrefs): any[] {
         "line-color": "data(ec)",
         "target-arrow-color": "data(ec)",
         "target-arrow-shape": "triangle",
-        "curve-style": "haystack",
-        "haystack-radius": 0.5,
+        "arrow-scale": 0.8,
+        "curve-style": "bezier",
         opacity: ui.edge_opacity,
+        label: "data(kind)",
+        "font-size": 8,
+        "text-rotation": "autorotate",
+        "text-opacity": 0.5,
+        color: "#999",
       },
     },
     {
@@ -171,6 +176,63 @@ type Props = {
   onPersistUi: () => void;
   backendType?: string;
 };
+
+function InspectorRelationships({ nodeId }: { nodeId: string }) {
+  const [data, setData] = useState<{inbound_groups: {rel_type: string; nodes: any[]}[]; outbound_groups: {rel_type: string; nodes: any[]}[]} | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    setLoading(true);
+    apiJson<any>(`/api/nodes/${encodeURIComponent(nodeId)}/neighbors?direction=both`)
+      .then(setData)
+      .catch(() => setData(null))
+      .finally(() => setLoading(false));
+  }, [nodeId]);
+
+  if (loading) return <div className="bh-inspector-section"><p className="muted" style={{padding: "8px 14px"}}>Loading...</p></div>;
+  if (!data) return null;
+
+  return (
+    <>
+      {data.outbound_groups.length > 0 && (
+        <details className="bh-inspector-section">
+          <summary>Outbound ({data.outbound_groups.reduce((a, g) => a + g.nodes.length, 0)})</summary>
+          <div className="bh-inspector-rels">
+            {data.outbound_groups.map(g => (
+              <details key={g.rel_type} className="bh-rel-group">
+                <summary className="bh-rel-header">{g.rel_type} <span className="badge">{g.nodes.length}</span></summary>
+                {g.nodes.map((n: any) => (
+                  <div key={n.id} className="bh-rel-node">
+                    <span className="bh-rel-kind">{n.kind}</span>
+                    <span className="bh-rel-label">{n.properties?.url || n.properties?.hostname || n.properties?.name || n.kind}</span>
+                  </div>
+                ))}
+              </details>
+            ))}
+          </div>
+        </details>
+      )}
+      {data.inbound_groups.length > 0 && (
+        <details className="bh-inspector-section">
+          <summary>Inbound ({data.inbound_groups.reduce((a, g) => a + g.nodes.length, 0)})</summary>
+          <div className="bh-inspector-rels">
+            {data.inbound_groups.map(g => (
+              <details key={g.rel_type} className="bh-rel-group">
+                <summary className="bh-rel-header">{g.rel_type} <span className="badge">{g.nodes.length}</span></summary>
+                {g.nodes.map((n: any) => (
+                  <div key={n.id} className="bh-rel-node">
+                    <span className="bh-rel-kind">{n.kind}</span>
+                    <span className="bh-rel-label">{n.properties?.url || n.properties?.hostname || n.properties?.name || n.kind}</span>
+                  </div>
+                ))}
+              </details>
+            ))}
+          </div>
+        </details>
+      )}
+    </>
+  );
+}
 
 export default function GraphPanel({ ui, onUiChange, backendType = "sqlite" }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -759,15 +821,15 @@ export default function GraphPanel({ ui, onUiChange, backendType = "sqlite" }: P
             <summary>Object Information</summary>
             <div className="bh-inspector-props">
               <div className="bh-prop"><span className="bh-prop-key">Kind</span><span className="bh-prop-val">{selected.kind}</span></div>
-              <div className="bh-prop"><span className="bh-prop-key">ID</span><span className="bh-prop-val">{selected.id}</span></div>
               {"source" in selected && (
-                <div className="bh-prop"><span className="bh-prop-key">Edge</span><span className="bh-prop-val">{(selected as {source: string; target: string}).source} → {(selected as {source: string; target: string}).target}</span></div>
+                <div className="bh-prop"><span className="bh-prop-key">Edge</span><span className="bh-prop-val">{(selected as {source: string; target: string}).source} &rarr; {(selected as {source: string; target: string}).target}</span></div>
               )}
               {Object.entries(selected.properties).map(([k, v]) => (
                 <div key={k} className="bh-prop"><span className="bh-prop-key">{k}</span><span className="bh-prop-val">{String(v)}</span></div>
               ))}
             </div>
           </details>
+          {"source" in selected ? null : <InspectorRelationships nodeId={selected.id} />}
         </div>
       )}
       {showCustomQuery && (
