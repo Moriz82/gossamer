@@ -166,6 +166,12 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi, backendType = 
   const [pathStart, setPathStart] = useState<{id: string; label: string} | null>(null);
   const [pathEnd, setPathEnd] = useState<{id: string; label: string} | null>(null);
   const [contextMenu, setContextMenu] = useState<{x: number; y: number; nodeId: string; nodeLabel: string} | null>(null);
+  const [sidebarTab, setSidebarTab] = useState<"queries" | "filters" | "path">("queries");
+  const [graphQueries, setGraphQueries] = useState<{name: string; description: string; category: string}[]>([]);
+  const [querySearch, setQuerySearch] = useState("");
+  const [activeQuery, setActiveQuery] = useState<string | null>(null);
+  const [queryLoading, setQueryLoading] = useState(false);
+  const [graphEmpty, setGraphEmpty] = useState(true);
 
   const applyStyles = useCallback(() => {
     const cy = cyRef.current;
@@ -187,6 +193,8 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi, backendType = 
         }
         setTypeColors(colors);
       }).catch(() => {});
+    apiJson<{name: string; description: string; category: string}[]>("/api/graph/queries")
+      .then(setGraphQueries).catch(() => {});
   }, []);
 
   const labelSkipRef = useRef(false);
@@ -231,7 +239,50 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi, backendType = 
     cy.layout({ name: cur.graph_layout as cytoscape.LayoutOptions["name"], animate: false }).run();
     cy.fit(undefined, 24);
     setStatus(`${data.nodes.length} nodes, ${data.edges.length} edges`);
+    setGraphEmpty(data.nodes.length === 0);
   }, [enabledKinds]);
+
+  const runQuery = useCallback(async (queryName: string) => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    setQueryLoading(true);
+    setActiveQuery(queryName);
+    try {
+      const data = await apiJson<{nodes: GraphNode[]; edges: GraphEdge[]}>(`/api/graph/queries/${queryName}/run`, {
+        method: "POST",
+      });
+      const cur = uiRef.current;
+      const nodes = data.nodes.map((n) => ({
+        data: {
+          id: n.id,
+          label: smartLabel(n.kind, n.properties, labelModeRef.current, cur.label_max_len),
+          bg: n.color || DEFAULT_NODE_COLOR,
+          kind: n.kind,
+          props: n.properties,
+          size: n.kind === "Host" ? cur.node_size * 1.4 : n.kind === "Source" ? cur.node_size * 0.7 : cur.node_size,
+        },
+      }));
+      const edges = data.edges.map((e) => ({
+        data: {
+          id: e.id,
+          source: e.source,
+          target: e.target,
+          ec: e.color || "#666",
+          kind: e.kind,
+        },
+      }));
+      cy.elements().remove();
+      cy.add([...nodes, ...edges]);
+      cy.layout({ name: cur.graph_layout as cytoscape.LayoutOptions["name"], animate: false }).run();
+      cy.fit(undefined, 24);
+      setStatus(`${data.nodes.length} nodes, ${data.edges.length} edges — ${queryName}`);
+      setGraphEmpty(data.nodes.length === 0);
+    } catch (e) {
+      setStatus(`Query failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setQueryLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -308,8 +359,9 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi, backendType = 
   }, []);
 
   useEffect(() => {
-    void loadGraph();
-  }, [loadGraph]);
+    // Start empty — user runs queries to populate
+    setGraphEmpty(true);
+  }, []);
 
   useEffect(() => {
     const cy = cyRef.current;
@@ -502,80 +554,138 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi, backendType = 
         <span className="toolbar-status">{status}</span>
       </div>
       <div className="graph-sidebar">
-        <div className="sidebar-section">
-          <div className="sidebar-section-header">Search</div>
-          <div className="sidebar-search">
-            <input type="text" placeholder="Search nodes..." value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)} className="sidebar-search-input" />
-            {searchQuery && (
-              <button type="button" className="sidebar-search-clear" onClick={() => setSearchQuery("")}>&times;</button>
-            )}
+        <div className="sidebar-tabs">
+          <button type="button" className={sidebarTab === "queries" ? "sidebar-tab active" : "sidebar-tab"} onClick={() => setSidebarTab("queries")}>Queries</button>
+          <button type="button" className={sidebarTab === "filters" ? "sidebar-tab active" : "sidebar-tab"} onClick={() => setSidebarTab("filters")}>Filters</button>
+          <button type="button" className={sidebarTab === "path" ? "sidebar-tab active" : "sidebar-tab"} onClick={() => setSidebarTab("path")}>Path</button>
+        </div>
+
+        {sidebarTab === "queries" && (
+          <div className="sidebar-tab-content">
+            <div className="sidebar-search">
+              <input type="text" placeholder="Search queries..." value={querySearch}
+                onChange={(e) => setQuerySearch(e.target.value)} className="sidebar-search-input" />
+              {querySearch && (
+                <button type="button" className="sidebar-search-clear" onClick={() => setQuerySearch("")}>&times;</button>
+              )}
+            </div>
+            {(() => {
+              const filtered = graphQueries.filter(q =>
+                !querySearch || q.name.toLowerCase().includes(querySearch.toLowerCase()) || q.description.toLowerCase().includes(querySearch.toLowerCase())
+              );
+              const grouped = filtered.reduce<Record<string, typeof filtered>>((acc, q) => {
+                (acc[q.category] = acc[q.category] || []).push(q);
+                return acc;
+              }, {});
+              return Object.entries(grouped).sort(([a],[b]) => a.localeCompare(b)).map(([cat, queries]) => (
+                <details key={cat} className="sidebar-section" open>
+                  <summary className="sidebar-section-header">{cat} <span className="badge">{queries.length}</span></summary>
+                  <div className="sidebar-query-list">
+                    {queries.map(q => (
+                      <button key={q.name} type="button"
+                        className={`sidebar-query-btn ${activeQuery === q.name ? "active" : ""}`}
+                        onClick={() => void runQuery(q.name)}
+                        disabled={queryLoading}>
+                        <span className="sidebar-query-name">{q.name.replace(/_/g, " ")}</span>
+                        <span className="sidebar-query-desc">{q.description}</span>
+                      </button>
+                    ))}
+                  </div>
+                </details>
+              ));
+            })()}
           </div>
-          {searchResults.length > 0 && (
-            <div className="sidebar-results">
-              {searchResults.map((r) => (
-                <button key={r.id} type="button" className="sidebar-result"
-                  onClick={() => {
-                    const cy = cyRef.current;
-                    if (!cy) return;
-                    const node = cy.getElementById(r.id);
-                    if (node.length) { cy.animate({ center: { eles: node }, zoom: 2 }, { duration: 300 }); node.select(); }
-                  }}>
-                  <span className="color-swatch" style={{ backgroundColor: r.color }} />
-                  <span className="sidebar-result-kind">{r.kind}</span>
-                  <span className="sidebar-result-label">{r.label}</span>
+        )}
+
+        {sidebarTab === "filters" && (
+          <div className="sidebar-tab-content">
+            <div className="sidebar-section">
+              <div className="sidebar-section-header">Search</div>
+              <div className="sidebar-search">
+                <input type="text" placeholder="Search nodes..." value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)} className="sidebar-search-input" />
+                {searchQuery && (
+                  <button type="button" className="sidebar-search-clear" onClick={() => setSearchQuery("")}>&times;</button>
+                )}
+              </div>
+              {searchResults.length > 0 && (
+                <div className="sidebar-results">
+                  {searchResults.map((r) => (
+                    <button key={r.id} type="button" className="sidebar-result"
+                      onClick={() => {
+                        const cy = cyRef.current;
+                        if (!cy) return;
+                        const node = cy.getElementById(r.id);
+                        if (node.length) { cy.animate({ center: { eles: node }, zoom: 2 }, { duration: 300 }); node.select(); }
+                      }}>
+                      <span className="color-swatch" style={{ backgroundColor: r.color }} />
+                      <span className="sidebar-result-kind">{r.kind}</span>
+                      <span className="sidebar-result-label">{r.label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="sidebar-section">
+              <div className="sidebar-section-header">
+                Node Types
+                <button type="button" className="sidebar-toggle-all" onClick={() => {
+                  if (graphStats) {
+                    const allKinds = Object.keys(graphStats.node_counts);
+                    setEnabledKinds(prev => prev.size === allKinds.length ? new Set() : new Set(allKinds));
+                  }
+                }}>
+                  {enabledKinds.size === Object.keys(graphStats?.node_counts || {}).length ? "None" : "All"}
                 </button>
+              </div>
+              {graphStats && Object.entries(graphStats.node_counts).map(([kind, count]) => (
+                <label key={kind} className="sidebar-filter">
+                  <input type="checkbox" checked={enabledKinds.has(kind)}
+                    onChange={() => { setEnabledKinds(prev => { const next = new Set(prev); if (next.has(kind)) next.delete(kind); else next.add(kind); return next; }); }} />
+                  <span className="color-swatch" style={{ backgroundColor: typeColors[kind] || DEFAULT_NODE_COLOR }} />
+                  <span className="sidebar-filter-name">{kind}</span>
+                  <span className="badge">{count}</span>
+                </label>
               ))}
             </div>
-          )}
-        </div>
-        <div className="sidebar-section">
-          <div className="sidebar-section-header">
-            Node Types
-            <button type="button" className="sidebar-toggle-all" onClick={() => {
-              if (graphStats) {
-                const allKinds = Object.keys(graphStats.node_counts);
-                setEnabledKinds(prev => prev.size === allKinds.length ? new Set() : new Set(allKinds));
-              }
-            }}>
-              {enabledKinds.size === Object.keys(graphStats?.node_counts || {}).length ? "None" : "All"}
-            </button>
-          </div>
-          {graphStats && Object.entries(graphStats.node_counts).map(([kind, count]) => (
-            <label key={kind} className="sidebar-filter">
-              <input type="checkbox" checked={enabledKinds.has(kind)}
-                onChange={() => { setEnabledKinds(prev => { const next = new Set(prev); if (next.has(kind)) next.delete(kind); else next.add(kind); return next; }); }} />
-              <span className="color-swatch" style={{ backgroundColor: typeColors[kind] || DEFAULT_NODE_COLOR }} />
-              <span className="sidebar-filter-name">{kind}</span>
-              <span className="badge">{count}</span>
-            </label>
-          ))}
-        </div>
-        <div className="sidebar-section">
-          <div className="sidebar-section-header">Quick Actions</div>
-          <div className="sidebar-actions">
-            <button type="button" className="ghost" onClick={() => setEnabledKinds(new Set(["Host"]))}>Load hosts only</button>
-            <button type="button" className="ghost" onClick={() => { if (graphStats) setEnabledKinds(new Set(Object.keys(graphStats.node_counts))); }}>Load full graph</button>
-          </div>
-        </div>
-        <div className="sidebar-section">
-          <div className="sidebar-section-header">Path Finder</div>
-          {backendType === "sqlite" ? (
-            <p className="sidebar-hint">Path queries require Neo4j</p>
-          ) : (
-            <div className="path-finder">
-              <div className="path-node-display"><span className="path-label">Start:</span>{pathStart ? <span className="path-node-name">{pathStart.label}</span> : <span className="path-node-placeholder">Right-click node</span>}</div>
-              <div className="path-node-display"><span className="path-label">End:</span>{pathEnd ? <span className="path-node-name">{pathEnd.label}</span> : <span className="path-node-placeholder">Right-click node</span>}</div>
-              <div className="path-actions">
-                <button type="button" className="primary" onClick={() => void findPath()} disabled={!pathStart || !pathEnd}>Find path</button>
-                <button type="button" className="ghost" onClick={clearPath}>Clear</button>
+            <div className="sidebar-section">
+              <div className="sidebar-section-header">Quick Actions</div>
+              <div className="sidebar-actions">
+                <button type="button" className="ghost" onClick={() => setEnabledKinds(new Set(["Host"]))}>Load hosts only</button>
+                <button type="button" className="ghost" onClick={() => { if (graphStats) setEnabledKinds(new Set(Object.keys(graphStats.node_counts))); }}>Load full graph</button>
+                <button type="button" className="ghost" onClick={() => void loadGraph()}>Refresh</button>
               </div>
             </div>
-          )}
-        </div>
+          </div>
+        )}
+
+        {sidebarTab === "path" && (
+          <div className="sidebar-tab-content">
+            <div className="sidebar-section">
+              <div className="sidebar-section-header">Path Finder</div>
+              {backendType === "sqlite" ? (
+                <p className="sidebar-hint">Path queries require Neo4j</p>
+              ) : (
+                <div className="path-finder">
+                  <div className="path-node-display"><span className="path-label">Start:</span>{pathStart ? <span className="path-node-name">{pathStart.label}</span> : <span className="path-node-placeholder">Right-click node</span>}</div>
+                  <div className="path-node-display"><span className="path-label">End:</span>{pathEnd ? <span className="path-node-name">{pathEnd.label}</span> : <span className="path-node-placeholder">Right-click node</span>}</div>
+                  <div className="path-actions">
+                    <button type="button" className="primary" onClick={() => void findPath()} disabled={!pathStart || !pathEnd}>Find path</button>
+                    <button type="button" className="ghost" onClick={clearPath}>Clear</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
       <div className="graph-canvas-wrap">
         <div ref={containerRef} className="cy" />
+        {graphEmpty && (
+          <div className="graph-empty-state">
+            <p>Run a query to explore the graph</p>
+          </div>
+        )}
         {tooltip && (
           <div className="graph-tooltip" style={{ left: tooltip.x, top: tooltip.y }}>
             <span className="graph-tooltip-kind">{tooltip.kind}</span>
