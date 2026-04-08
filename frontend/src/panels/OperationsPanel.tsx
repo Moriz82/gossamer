@@ -36,6 +36,7 @@ export default function OperationsPanel() {
   const [selectedPreset, setSelectedPreset] = useState<string | null>(null);
   const [presets, setPresets] = useState<PresetInfo[] | null>(null);
   const [enabledModules, setEnabledModules] = useState<Set<string>>(new Set(["crawl_audit"]));
+  const [moduleWordlists, setModuleWordlists] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [crawlProgress, setCrawlProgress] = useState<CrawlProgress | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -112,10 +113,18 @@ export default function OperationsPanel() {
     log("crawl", `Starting crawl of ${crawlSeeds}`);
 
     const hasAudit = enabledModules.has("crawl_audit");
+    const modules = PIPELINE_MODULES
+      .filter(m => m.id !== "crawl_audit")
+      .map(m => ({
+        id: m.id,
+        enabled: enabledModules.has(m.id),
+        wordlist: moduleWordlists[m.id] || null,
+        extra_args: [] as string[],
+      }));
     const reqBody: Record<string, unknown> = {
       seeds_file: crawlSeeds, source_label: crawlSource,
       crawl_mode: hasAudit ? "crawl_audit" : "crawl_only",
-      scan_preset: selectedPreset || undefined,
+      modules,
     };
     if (maxDepth) reqBody.max_depth = Number(maxDepth);
     if (maxPages) reqBody.max_pages = Number(maxPages);
@@ -141,15 +150,26 @@ export default function OperationsPanel() {
           const line = part.replace(/^data: /, "").trim();
           if (!line) continue;
           try {
-            const evt = JSON.parse(line) as CrawlProgress;
+            const evt = JSON.parse(line) as any;
             if (evt.type === "progress") {
               setCrawlProgress(evt);
               if (evt.current_url) log("crawl", `[${evt.visited}/${evt.max_pages}] ${evt.current_url}`);
             } else if (evt.type === "crawl_complete") {
               setCrawlProgress(null);
               log("crawl", `Crawl complete: ${evt.nodes} nodes, ${evt.edges} edges`, "success");
+            } else if (evt.type === "phase_start") {
+              log(evt.phase, `Starting ${evt.phase} phase (${evt.targets} targets)`, "info");
+            } else if (evt.type === "phase_complete") {
+              log(evt.phase, `${evt.phase} phase complete`, "success");
             } else if (evt.type === "scan_progress") {
-              log("scan", `${evt.scanner}: ${evt.phase}`, evt.phase === "error" ? "error" : "info");
+              const phase = evt.pipeline_phase || "scan";
+              if (evt.phase === "error") {
+                log(phase, `${evt.scanner}: ERROR — ${evt.detail}`, "error");
+              } else if (evt.phase === "complete" && evt.ingested) {
+                log(phase, `${evt.scanner}: done (${evt.ingested.nodes} nodes, ${evt.ingested.edges} edges)`, "success");
+              } else {
+                log(phase, `${evt.scanner}: ${evt.phase}`, "info");
+              }
             } else if (evt.type === "complete") {
               setCrawlProgress(null);
               log("pipeline", `Pipeline complete: ${evt.nodes} nodes, ${evt.edges} edges`, "success");
@@ -221,11 +241,16 @@ export default function OperationsPanel() {
                 <div key={phase} className="ops-mod-group">
                   <div className="ops-mod-phase">{phase}</div>
                   {PIPELINE_MODULES.filter(m => m.phase === phase).map(m => (
-                    <label key={m.id} className="ops-mod-item">
-                      <input type="checkbox" checked={enabledModules.has(m.id)} onChange={() => toggleModule(m.id)} />
-                      <span className="ops-mod-name">{m.label}</span>
-                      <span className="ops-mod-desc">{m.desc}</span>
-                    </label>
+                    <div key={m.id} className="ops-mod-item-wrap">
+                      <label className="ops-mod-item">
+                        <input type="checkbox" checked={enabledModules.has(m.id)} onChange={() => toggleModule(m.id)} />
+                        <span className="ops-mod-name">{m.label}</span>
+                        <span className="ops-mod-desc">{m.desc}</span>
+                      </label>
+                      {enabledModules.has(m.id) && m.phase === "fuzz" && (
+                        <input className="ops-mod-wordlist" value={moduleWordlists[m.id] || ""} onChange={e => setModuleWordlists(prev => ({...prev, [m.id]: e.target.value}))} placeholder="Wordlist path (optional)" />
+                      )}
+                    </div>
                   ))}
                 </div>
               ))}

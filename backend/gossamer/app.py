@@ -113,6 +113,13 @@ class IngestRequest(BaseModel):
     ingestor_hint: str | None = None
 
 
+class ModuleConfig(BaseModel):
+    id: str
+    enabled: bool = True
+    wordlist: str | None = None
+    extra_args: list[str] = Field(default_factory=list)
+
+
 class CrawlOptions(BaseModel):
     seeds_file: str
     source_label: str = "crawl"
@@ -122,6 +129,7 @@ class CrawlOptions(BaseModel):
     cookies: dict[str, str] | None = None
     crawl_mode: Literal["crawl_only", "crawl_audit"] = "crawl_only"
     scan_preset: str | None = None
+    modules: list[ModuleConfig] | None = None
 
 
 class SettingsPatchBody(BaseModel):
@@ -445,51 +453,94 @@ def ingest_crawl_stream(
     except Exception:
         pass
 
+    def _get_endpoint_urls() -> list[str]:
+        """Collect all discovered endpoint URLs from the store."""
+        try:
+            conn = store.as_sqlite_connection()
+            if conn:
+                return [
+                    r[0] for r in conn.execute(
+                        "SELECT DISTINCT json_extract(properties_json, '$.url') "
+                        "FROM nodes WHERE kind='Endpoint' "
+                        "AND json_extract(properties_json, '$.url') IS NOT NULL"
+                    ).fetchall() if r[0]
+                ]
+        except Exception:
+            pass
+        return []
+
+    def _get_module_cfg(mod_id: str) -> ModuleConfig | None:
+        if not body.modules:
+            return None
+        return next((m for m in body.modules if m.id == mod_id and m.enabled), None)
+
+    def _run_tool(plugin_id: str, targets: list[str], phase_label: str, mod_cfg: ModuleConfig | None = None) -> None:
+        ex_args: list[str] = []
+        if mod_cfg:
+            ex_args = list(mod_cfg.extra_args)
+            if mod_cfg.wordlist:
+                if plugin_id in ("ffuf", "feroxbuster"):
+                    ex_args.extend(["-w", mod_cfg.wordlist])
+        progress_q.put({"type": "scan_progress", "scanner": plugin_id, "phase": "starting", "pipeline_phase": phase_label})
+        try:
+            result = run_scanner(plugin_id, targets, extra_args=ex_args if ex_args else None)
+            if result.get("ok") and result.get("output_file"):
+                scan_stats = ingest_and_store(
+                    store, Path(result["output_file"]),
+                    f"{phase_label}_{plugin_id}", result.get("ingestor"), settings,
+                )
+                Path(result["output_file"]).unlink(missing_ok=True)
+                progress_q.put({"type": "scan_progress", "scanner": plugin_id, "phase": "complete", "ingested": scan_stats, "pipeline_phase": phase_label})
+            else:
+                progress_q.put({"type": "scan_progress", "scanner": plugin_id, "phase": "complete", "result": "no_output", "pipeline_phase": phase_label})
+        except Exception as exc:
+            progress_q.put({"type": "scan_progress", "scanner": plugin_id, "phase": "error", "detail": str(exc), "pipeline_phase": phase_label})
+
     def _run() -> None:
         try:
+            # Build enabled module set
+            enabled = set()
+            if body.modules:
+                enabled = {m.id for m in body.modules if m.enabled}
+            elif body.scan_preset:
+                preset = get_preset(body.scan_preset)
+                if preset:
+                    from gossamer.plugin_store import list_plugins as _lp
+                    for s in resolve_scanners(preset, _lp()):
+                        enabled.add(s["plugin_id"])
+                    if preset.get("audit"):
+                        enabled.add("crawl_audit")
+
+            # ── Phase 1: CRAWL ──
             stats = ingest_and_store(
                 store, p, body.source_label, "crawl_seed", settings,
                 extra_options=extra,
             )
             progress_q.put({"type": "crawl_complete", **stats})
-            # Auto-scan if preset includes scanners
-            if body.scan_preset:
-                preset = get_preset(body.scan_preset)
-                if preset:
-                    from gossamer.plugin_store import list_plugins as _list_plugins
-                    scanner_list = resolve_scanners(preset, _list_plugins())
-                    if scanner_list:
-                        # Collect discovered endpoint URLs from store
-                        try:
-                            conn = store.as_sqlite_connection()
-                            if conn:
-                                urls = [
-                                    r[0] for r in conn.execute(
-                                        "SELECT DISTINCT json_extract(properties_json, '$.url') FROM nodes WHERE kind='Endpoint' AND json_extract(properties_json, '$.url') IS NOT NULL"
-                                    ).fetchall()
-                                    if r[0]
-                                ]
-                            else:
-                                urls = []
-                        except Exception:
-                            urls = []
-                        for scanner_cfg in scanner_list:
-                            pid = scanner_cfg["plugin_id"]
-                            ex_args = scanner_cfg.get("extra_args", [])
-                            progress_q.put({"type": "scan_progress", "scanner": pid, "phase": "starting"})
-                            try:
-                                result = run_scanner(pid, urls, extra_args=ex_args)
-                                if result.get("ok") and result.get("output_file"):
-                                    scan_stats = ingest_and_store(
-                                        store, Path(result["output_file"]),
-                                        f"scan_{pid}", result.get("ingestor"), settings,
-                                    )
-                                    Path(result["output_file"]).unlink(missing_ok=True)
-                                    progress_q.put({"type": "scan_progress", "scanner": pid, "phase": "complete", "ingested": scan_stats})
-                                else:
-                                    progress_q.put({"type": "scan_progress", "scanner": pid, "phase": "complete", "result": "no_output"})
-                            except Exception as scan_exc:
-                                progress_q.put({"type": "scan_progress", "scanner": pid, "phase": "error", "detail": str(scan_exc)})
+
+            # ── Phase 2: FUZZ ──
+            fuzzers = [mid for mid in ("ffuf", "feroxbuster") if mid in enabled]
+            if fuzzers:
+                urls = _get_endpoint_urls()
+                # Extract unique base URLs for fuzzing
+                from urllib.parse import urlparse as _up
+                bases = list({f"{_up(u).scheme}://{_up(u).netloc}" for u in urls if u})
+                if bases:
+                    progress_q.put({"type": "phase_start", "phase": "fuzz", "targets": len(bases)})
+                    for fid in fuzzers:
+                        _run_tool(fid, bases, "fuzz", _get_module_cfg(fid))
+                    progress_q.put({"type": "phase_complete", "phase": "fuzz"})
+
+            # ── Phase 3: SCAN ──
+            scanners = [mid for mid in ("nuclei", "trivy", "gitleaks", "grype", "semgrep") if mid in enabled]
+            if scanners:
+                urls = _get_endpoint_urls()  # Re-fetch — fuzz may have discovered more
+                if urls:
+                    progress_q.put({"type": "phase_start", "phase": "scan", "targets": len(urls)})
+                    for sid in scanners:
+                        _run_tool(sid, urls, "scan", _get_module_cfg(sid))
+                    progress_q.put({"type": "phase_complete", "phase": "scan"})
+
             progress_q.put({"type": "complete", **stats})
         except Exception as exc:
             progress_q.put({"type": "error", "detail": str(exc)})
