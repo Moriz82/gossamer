@@ -35,6 +35,7 @@ from gossamer.plugin_store import (
 )
 from gossamer.scanner_runner import run_scanner, stop_scanner
 from gossamer.pipeline import ingest_and_store
+from gossamer.scan_presets import get_preset, list_presets, resolve_scanners
 from gossamer.queries.builtins import *  # noqa: F401,F403 - register builtins
 from gossamer.queries.registry import all_queries, get_query
 from gossamer.queries.yaml_loader import load_yaml_queries
@@ -105,6 +106,7 @@ class CrawlOptions(BaseModel):
     scope_hosts: list[str] | None = None
     cookies: dict[str, str] | None = None
     crawl_mode: Literal["crawl_only", "crawl_audit"] = "crawl_only"
+    scan_preset: str | None = None
 
 
 class SettingsPatchBody(BaseModel):
@@ -408,6 +410,10 @@ def ingest_crawl_stream(
         extra["cookies"] = body.cookies
     if body.crawl_mode == "crawl_audit":
         extra["audit"] = True
+    if body.scan_preset:
+        preset = get_preset(body.scan_preset)
+        if preset and preset.get("audit"):
+            extra["audit"] = True
     extra["progress_callback"] = lambda evt: progress_q.put(evt)
 
     def _run() -> None:
@@ -416,6 +422,45 @@ def ingest_crawl_stream(
                 store, p, body.source_label, "crawl_seed", settings,
                 extra_options=extra,
             )
+            progress_q.put({"type": "crawl_complete", **stats})
+            # Auto-scan if preset includes scanners
+            if body.scan_preset:
+                preset = get_preset(body.scan_preset)
+                if preset:
+                    from gossamer.plugin_store import list_plugins as _list_plugins
+                    scanner_list = resolve_scanners(preset, _list_plugins())
+                    if scanner_list:
+                        # Collect discovered endpoint URLs from store
+                        try:
+                            conn = store.as_sqlite_connection()
+                            if conn:
+                                urls = [
+                                    r[0] for r in conn.execute(
+                                        "SELECT DISTINCT json_extract(properties_json, '$.url') FROM nodes WHERE kind='Endpoint' AND json_extract(properties_json, '$.url') IS NOT NULL"
+                                    ).fetchall()
+                                    if r[0]
+                                ]
+                            else:
+                                urls = []
+                        except Exception:
+                            urls = []
+                        for scanner_cfg in scanner_list:
+                            pid = scanner_cfg["plugin_id"]
+                            ex_args = scanner_cfg.get("extra_args", [])
+                            progress_q.put({"type": "scan_progress", "scanner": pid, "phase": "starting"})
+                            try:
+                                result = run_scanner(pid, urls, extra_args=ex_args)
+                                if result.get("ok") and result.get("output_file"):
+                                    scan_stats = ingest_and_store(
+                                        store, Path(result["output_file"]),
+                                        f"scan_{pid}", result.get("ingestor"), settings,
+                                    )
+                                    Path(result["output_file"]).unlink(missing_ok=True)
+                                    progress_q.put({"type": "scan_progress", "scanner": pid, "phase": "complete", "ingested": scan_stats})
+                                else:
+                                    progress_q.put({"type": "scan_progress", "scanner": pid, "phase": "complete", "result": "no_output"})
+                            except Exception as scan_exc:
+                                progress_q.put({"type": "scan_progress", "scanner": pid, "phase": "error", "detail": str(scan_exc)})
             progress_q.put({"type": "complete", **stats})
         except Exception as exc:
             progress_q.put({"type": "error", "detail": str(exc)})
@@ -699,6 +744,23 @@ def api_scanner_run(
 def api_scanner_stop(plugin_id: str) -> dict[str, Any]:
     """Stop a running scanner."""
     return stop_scanner(plugin_id)
+
+
+
+# --- Scan preset endpoints ---
+
+
+@api.get("/scan-presets")
+def api_scan_presets() -> list[dict[str, Any]]:
+    return list_presets()
+
+
+@api.get("/scan-presets/{name}")
+def api_scan_preset(name: str) -> dict[str, Any]:
+    preset = get_preset(name)
+    if not preset:
+        raise HTTPException(404, f"Unknown preset: {name}")
+    return preset
 
 
 app.include_router(api)
