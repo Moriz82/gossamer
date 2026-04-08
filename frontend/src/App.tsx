@@ -80,6 +80,11 @@ export default function App() {
   const [toast, setToast] = useState<string | null>(null);
   const [graphStats, setGraphStats] = useState<GraphStats | null>(null);
   const [backendType, setBackendType] = useState<string>("sqlite");
+  const [projects, setProjects] = useState<{name: string; created_at: string; has_database: boolean; size_bytes: number}[]>([]);
+  const [activeProject, setActiveProject] = useState("default");
+  const [showProjectMenu, setShowProjectMenu] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
+  const [projectBusy, setProjectBusy] = useState(false);
 
   const loadSettings = useCallback(async () => {
     try {
@@ -92,6 +97,58 @@ export default function App() {
 
   const loadGraphStats = useCallback(() => {
     apiJson<GraphStats>("/api/graph/stats").then(setGraphStats).catch(() => {});
+  }, []);
+
+  const loadProjects = useCallback(() => {
+    apiJson<{name: string; created_at: string; has_database: boolean; size_bytes: number}[]>("/api/projects")
+      .then(setProjects).catch(() => {});
+  }, []);
+
+  const createProject = useCallback(async () => {
+    if (!newProjectName.trim()) return;
+    setProjectBusy(true);
+    try {
+      await apiJson("/api/projects", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newProjectName.trim() }),
+      });
+      setNewProjectName("");
+      loadProjects();
+    } catch (e) { setToast(e instanceof Error ? e.message : String(e)); }
+    finally { setProjectBusy(false); }
+  }, [newProjectName, loadProjects]);
+
+  const switchProject = useCallback(async (name: string) => {
+    setProjectBusy(true);
+    try {
+      await apiJson(`/api/projects/${name}/activate`, { method: "POST" });
+      setActiveProject(name);
+      setShowProjectMenu(false);
+      loadGraphStats();
+    } catch (e) { setToast(e instanceof Error ? e.message : String(e)); }
+    finally { setProjectBusy(false); }
+  }, [loadGraphStats]);
+
+  const deleteProject = useCallback(async (name: string) => {
+    if (!confirm(`Delete project "${name}" and all its data?`)) return;
+    setProjectBusy(true);
+    try {
+      await apiJson(`/api/projects/${name}`, { method: "DELETE" });
+      loadProjects();
+    } catch (e) { setToast(e instanceof Error ? e.message : String(e)); }
+    finally { setProjectBusy(false); }
+  }, [loadProjects]);
+
+  const exportProject = useCallback(async (name: string) => {
+    setProjectBusy(true);
+    try {
+      const r = await apiJson<{ok: boolean; path: string}>("/api/projects/export", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, format: "zip" }),
+      });
+      setToast(`Exported to ${r.path}`);
+    } catch (e) { setToast(e instanceof Error ? e.message : String(e)); }
+    finally { setProjectBusy(false); }
   }, []);
 
   useEffect(() => {
@@ -122,6 +179,7 @@ export default function App() {
           setNeedLogin(false);
           await loadSettings();
           loadGraphStats();
+          loadProjects();
         } else {
           setNeedLogin(true);
         }
@@ -141,13 +199,14 @@ export default function App() {
       ac.abort();
       window.clearTimeout(timer);
     };
-  }, [loadSettings, loadGraphStats]);
+  }, [loadSettings, loadGraphStats, loadProjects]);
 
   const onAuthed = useCallback(() => {
     setNeedLogin(false);
     void loadSettings();
     loadGraphStats();
-  }, [loadSettings, loadGraphStats]);
+    loadProjects();
+  }, [loadSettings, loadGraphStats, loadProjects]);
 
   const onPersistUi = useCallback(async () => {
     try {
@@ -166,6 +225,16 @@ export default function App() {
       setToast(e instanceof Error ? e.message : String(e));
     }
   }, [ui]);
+
+  useEffect(() => {
+    if (!showProjectMenu) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest(".project-selector")) setShowProjectMenu(false);
+    };
+    document.addEventListener("click", handler);
+    return () => document.removeEventListener("click", handler);
+  }, [showProjectMenu]);
 
   if (!booted) {
     return <div className="boot-screen">Loading…</div>;
@@ -198,6 +267,36 @@ export default function App() {
             <circle cx="16" cy="16" r="2" fill="currentColor" opacity="0.8"/>
           </svg>
           Gossamer
+        </div>
+        <div className="project-selector">
+          <button type="button" className="project-selector-btn" onClick={() => { setShowProjectMenu(!showProjectMenu); if (!showProjectMenu) loadProjects(); }}>
+            {activeProject}
+            <span className="project-chevron">&#9662;</span>
+          </button>
+          {showProjectMenu && (
+            <div className="project-menu">
+              <div className="project-menu-header">Projects</div>
+              {projects.map(p => (
+                <div key={p.name} className={`project-menu-item ${p.name === activeProject ? "active" : ""}`}>
+                  <button type="button" className="project-menu-name" onClick={() => void switchProject(p.name)} disabled={projectBusy}>
+                    {p.name}
+                    {p.name === activeProject && <span className="project-active-dot" />}
+                  </button>
+                  <div className="project-menu-actions">
+                    <button type="button" className="ghost" onClick={() => void exportProject(p.name)} disabled={projectBusy} title="Export">&darr;</button>
+                    {p.name !== "default" && (
+                      <button type="button" className="ghost" onClick={() => void deleteProject(p.name)} disabled={projectBusy} title="Delete">&times;</button>
+                    )}
+                  </div>
+                </div>
+              ))}
+              <div className="project-menu-create">
+                <input type="text" placeholder="New project name" value={newProjectName} onChange={(e) => setNewProjectName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") void createProject(); }} />
+                <button type="button" className="primary" onClick={() => void createProject()} disabled={projectBusy || !newProjectName.trim()}>Create</button>
+              </div>
+            </div>
+          )}
         </div>
         <nav className="nav-groups">
           {tabGroups.map((group) => (

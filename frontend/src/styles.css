@@ -1552,3 +1552,21 @@ button.ghost-inline:hover:not(:disabled) {
 .preset-card-name { font-weight: 600; font-size: 0.88rem; text-transform: capitalize; }
 .preset-card-desc { font-size: 0.75rem; color: var(--fg-dim, #999); }
 .preset-card-scanners { font-size: 0.7rem; color: var(--accent); margin-top: 2px; }
+
+/* --- Project Selector --- */
+.project-selector { position: relative; margin-left: 8px; }
+.project-selector-btn { display: flex; align-items: center; gap: 4px; padding: 4px 10px; background: var(--bg-alt, #1e1e1e); border: 1px solid var(--border); border-radius: 4px; color: var(--fg); font-size: 0.82rem; cursor: pointer; }
+.project-selector-btn:hover { border-color: var(--accent); }
+.project-chevron { font-size: 0.7rem; }
+.project-menu { position: absolute; top: 100%; left: 0; margin-top: 4px; background: var(--bg-card, #1a1a1a); border: 1px solid var(--border); border-radius: 6px; min-width: 240px; z-index: 50; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
+.project-menu-header { padding: 8px 12px; font-size: 0.78rem; font-weight: 600; border-bottom: 1px solid var(--border); color: var(--fg-dim, #999); }
+.project-menu-item { display: flex; align-items: center; justify-content: space-between; padding: 2px 6px 2px 0; border-bottom: 1px solid var(--border, transparent); }
+.project-menu-item.active { background: var(--bg-alt, #1e1e1e); }
+.project-menu-name { flex: 1; text-align: left; padding: 6px 12px; background: transparent; border: none; color: var(--fg); cursor: pointer; font-size: 0.82rem; display: flex; align-items: center; gap: 6px; }
+.project-menu-name:hover { color: var(--accent); }
+.project-active-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.project-menu-actions { display: flex; gap: 2px; }
+.project-menu-actions .ghost { padding: 2px 6px; font-size: 0.78rem; }
+.project-menu-create { display: flex; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--border); }
+.project-menu-create input { flex: 1; padding: 4px 8px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 4px; color: var(--fg); font-size: 0.8rem; }
+.project-menu-create .primary { padding: 4px 10px; font-size: 0.78rem; }
