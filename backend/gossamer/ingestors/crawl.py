@@ -18,6 +18,7 @@ from gossamer.ingestors.forms import extract_forms
 from gossamer.ingestors.headers import extract_header_intel
 from gossamer.ingestors.registry import register_ingestor
 from gossamer.models import IngestContext, RawEdge, RawNode, RawObservationBatch
+from gossamer.response_store import save_response
 from gossamer.scope import host_allowed
 
 logger = logging.getLogger(__name__)
@@ -376,7 +377,27 @@ class CrawlIngestor(Ingestor):
                 status = result.status_code
                 ctype = result.content_type
 
+                # Save HTTP response if responses_dir is available
+                response_id = None
+                responses_dir = ctx.options.get("responses_dir")
+                if responses_dir:
+                    try:
+                        from pathlib import Path
+                        response_id = save_response(
+                            Path(responses_dir),
+                            url=canon,
+                            method=method,
+                            status=status,
+                            req_headers={"User-Agent": settings.crawl_user_agent},
+                            resp_headers=result.headers or {},
+                            body=result.body,
+                        )
+                    except Exception:
+                        pass  # Don't fail crawl if response storage fails
+
                 props: dict = {"url": canon, "method": method, "status_code": status}
+                if response_id:
+                    props["response_id"] = response_id
                 if ctype:
                     props["content_type"] = ctype.split(";")[0].strip()
 

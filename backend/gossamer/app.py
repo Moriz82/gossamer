@@ -370,6 +370,12 @@ def ingest_crawl(
         extra["cookies"] = body.cookies
     if body.crawl_mode == "crawl_audit":
         extra["audit"] = True
+    try:
+        from gossamer.project import open_project
+        proj = open_project(settings.active_project)
+        extra["responses_dir"] = str(proj.responses_dir)
+    except Exception:
+        pass
     stats = ingest_and_store(
         store,
         p,
@@ -409,6 +415,14 @@ def ingest_crawl_stream(
     if body.crawl_mode == "crawl_audit":
         extra["audit"] = True
     extra["progress_callback"] = lambda evt: progress_q.put(evt)
+
+    # Pass responses_dir for response storage
+    try:
+        from gossamer.project import open_project
+        proj = open_project(settings.active_project)
+        extra["responses_dir"] = str(proj.responses_dir)
+    except Exception:
+        pass
 
     def _run() -> None:
         try:
