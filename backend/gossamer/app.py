@@ -515,8 +515,14 @@ def ingest_crawl_stream(
         if mod_cfg:
             ex_args.extend(mod_cfg.extra_args)
 
+        def _tool_progress(evt: dict[str, Any]) -> None:
+            progress_q.put({"type": "scan_progress", "scanner": plugin_id,
+                            "phase": evt.get("phase", "running"),
+                            "detail": f"{evt.get('lines_processed', '')} lines, {evt.get('elapsed_seconds', '')}s",
+                            "pipeline_phase": phase_label})
         try:
-            result = run_scanner(plugin_id, targets, extra_args=ex_args if ex_args else None)
+            result = run_scanner(plugin_id, targets, extra_args=ex_args if ex_args else None,
+                                 progress_cb=_tool_progress, timeout=1800)
             if result.get("ok") and result.get("output_file"):
                 scan_stats = ingest_and_store(
                     store, Path(result["output_file"]),
@@ -555,13 +561,17 @@ def ingest_crawl_stream(
             fuzzers = [mid for mid in ("ffuf", "feroxbuster") if mid in enabled]
             if fuzzers:
                 urls = _get_endpoint_urls()
-                # Extract unique base URLs for fuzzing
                 from urllib.parse import urlparse as _up
-                bases = list({f"{_up(u).scheme}://{_up(u).netloc}" for u in urls if u})
+                bases = sorted({f"{_up(u).scheme}://{_up(u).netloc}" for u in urls if u})
                 if bases:
                     progress_q.put({"type": "phase_start", "phase": "fuzz", "targets": len(bases)})
                     for fid in fuzzers:
-                        _run_tool(fid, bases, "fuzz", _get_module_cfg(fid))
+                        mod_cfg = _get_module_cfg(fid)
+                        for base_url in bases:
+                            progress_q.put({"type": "scan_progress", "scanner": fid,
+                                            "phase": "starting", "detail": f"target: {base_url}",
+                                            "pipeline_phase": "fuzz"})
+                            _run_tool(fid, [base_url], "fuzz", mod_cfg)
                     progress_q.put({"type": "phase_complete", "phase": "fuzz"})
 
             # ── Phase 3: SCAN ──

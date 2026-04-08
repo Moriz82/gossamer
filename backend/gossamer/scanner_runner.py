@@ -46,8 +46,37 @@ def run_scanner(
     cmd = [binary]
     cmd.extend(plugin.default_args)
 
+    # Extract wordlist from extra_args if present (for fuzzers)
+    wordlist_path = None
+    filtered_extra: list[str] = []
+    if extra_args:
+        skip_next = False
+        for i, arg in enumerate(extra_args):
+            if skip_next:
+                skip_next = False
+                continue
+            if arg == "-w" and i + 1 < len(extra_args):
+                wordlist_path = extra_args[i + 1]
+                skip_next = True
+            else:
+                filtered_extra.append(arg)
+
     if plugin_id == "nuclei":
-        cmd.extend(["-l", targets_file.name, "-o", output_file.name])
+        cmd.extend(["-l", targets_file.name, "-o", output_file.name, "-jsonl"])
+    elif plugin_id == "ffuf":
+        # ffuf needs: -u URL/FUZZ -w wordlist for each target
+        # Run against first target with FUZZ keyword
+        if wordlist_path:
+            base = targets[0] if targets else "http://localhost"
+            url = base.rstrip("/") + "/FUZZ"
+            cmd.extend(["-u", url, "-w", wordlist_path, "-o", output_file.name, "-of", "json"])
+        else:
+            cmd.extend(["-l", targets_file.name, "-o", output_file.name])
+    elif plugin_id == "feroxbuster":
+        base = targets[0] if targets else "http://localhost"
+        cmd.extend(["-u", base, "-o", output_file.name])
+        if wordlist_path:
+            cmd.extend(["-w", wordlist_path])
     elif plugin_id == "trivy":
         cmd.extend([targets[0] if targets else "."])
         cmd.extend(["-o", output_file.name])
@@ -57,11 +86,10 @@ def run_scanner(
         cmd.extend([targets[0] if targets else "."])
         cmd.extend(["-o", "json", "--file", output_file.name])
     else:
-        # Generic: pass targets file and output file
         cmd.extend(["-l", targets_file.name, "-o", output_file.name])
 
-    if extra_args:
-        cmd.extend(extra_args)
+    if filtered_extra:
+        cmd.extend(filtered_extra)
 
     if progress_cb:
         progress_cb({"type": "progress", "phase": "starting", "command": " ".join(cmd[:3]) + "..."})
