@@ -1,4 +1,4 @@
-import cytoscape, { type Core, type Stylesheet } from "cytoscape";
+import cytoscape, { type Core } from "cytoscape";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch, apiJson } from "../api";
 
@@ -45,7 +45,8 @@ type LabelMode = "smart" | "full" | "hidden" | "kind";
 
 const LAYOUTS = ["cose", "breadthfirst", "circle", "grid", "concentric", "random"] as const;
 
-function layoutOpts(name: string): Record<string, unknown> {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function layoutOpts(name: string): any {
   const base = { name, animate: false };
   if (name === "cose") {
     return { ...base, nodeRepulsion: () => 8000, idealEdgeLength: () => 80, edgeElasticity: () => 100, gravity: 0.25, numIter: 1000, nodeDimensionsIncludeLabels: true };
@@ -104,7 +105,8 @@ function smartLabel(kind: string, props: Record<string, unknown>, mode: LabelMod
   }
 }
 
-function makeStylesheet(ui: UIPrefs): Stylesheet[] {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function makeStylesheet(ui: UIPrefs): any[] {
   return [
     {
       selector: "node",
@@ -170,7 +172,7 @@ type Props = {
   backendType?: string;
 };
 
-export default function GraphPanel({ ui, onUiChange, onPersistUi, backendType = "sqlite" }: Props) {
+export default function GraphPanel({ ui, onUiChange, backendType = "sqlite" }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
   const uiRef = useRef(ui);
@@ -178,7 +180,7 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi, backendType = 
 
   const [selected, setSelected] = useState<GraphNode | GraphEdge | null>(null);
   const [status, setStatus] = useState<string>("");
-  const [labelMode, setLabelMode] = useState<LabelMode>("smart");
+  const labelMode: LabelMode = "smart";
   const labelModeRef = useRef(labelMode);
   labelModeRef.current = labelMode;
   const [graphStats, setGraphStats] = useState<GraphStats | null>(null);
@@ -328,7 +330,7 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi, backendType = 
         container: el,
         elements: [],
         style: makeStylesheet(uiRef.current),
-        layout: { name: uiRef.current.graph_layout, animate: false },
+        layout: layoutOpts(uiRef.current.graph_layout),
         wheelSensitivity: uiRef.current.wheel_sensitivity,
         minZoom: 0.1,
         maxZoom: 4,
@@ -386,7 +388,7 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi, backendType = 
     cy.on("tap", () => setContextMenu(null));
     cy.on("tap", (evt) => {
       if (evt.target === cy) {
-        setSelectedNodes(new Set());
+        setSelected(null);
       }
     });
 
@@ -472,7 +474,7 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi, backendType = 
       if (e.key === "Escape") {
         cy.elements().unselect();
         cy.elements().removeClass("dimmed path-node path-edge");
-        setSelectedNodes(new Set());
+        setSelected(null);
         setContextMenu(null);
       }
       if (e.key === "a" && (e.ctrlKey || e.metaKey)) {
@@ -505,8 +507,9 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi, backendType = 
       }
       if (allNodes.length || allEdges.length) {
         cy.add([...allNodes, ...allEdges]);
-        const newEles = cy.collection(allNodes.map(n => cy.getElementById(n.data.id)));
-        if (newEles.length) newEles.layout({ name: "cose", animate: true, animationDuration: 300, fit: false }).run();
+        let newEles = cy.collection();
+        allNodes.forEach(n => { newEles = newEles.union(cy.getElementById(n.data.id)); });
+        if (newEles.length) newEles.layout({ name: "cose", animate: true, animationDuration: 300, fit: false } as any).run();
       }
       setStatus(`Added ${added} neighbors`);
     } catch (e) {
@@ -590,104 +593,33 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi, backendType = 
     } catch (e) { setStatus(`Query failed: ${e instanceof Error ? e.message : String(e)}`); } finally { setQueryLoading(false); }
   }
 
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
   return (
-    <div className={`graph-panel ${selected ? "inspector-open" : ""}`}>
-      <div className="graph-toolbar panel-toolbar">
-        <div className="toolbar-group">
-          <button type="button" onClick={() => void loadGraph()}>
-            Refresh
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              cyRef.current?.fit(undefined, 24);
-            }}
-          >
-            Fit
-          </button>
-        </div>
-        <label className="inline">
-          Layout
-          <select
-            value={ui.graph_layout}
-            onChange={(e) => onUiChange({ graph_layout: e.target.value })}
-          >
-            {LAYOUTS.map((l) => (
-              <option key={l} value={l}>
-                {l}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="inline">
-          Labels
-          <select value={labelMode} onChange={(e) => setLabelMode(e.target.value as LabelMode)}>
-            <option value="smart">Smart</option>
-            <option value="full">Full</option>
-            <option value="kind">Kind only</option>
-            <option value="hidden">Hidden</option>
-          </select>
-        </label>
-        <label className="inline">
-          Label len
-          <input type="range" min={12} max={80} step={1} value={ui.label_max_len}
-            onChange={(e) => onUiChange({ label_max_len: Number(e.target.value) })} />
-        </label>
-        <label className="inline">
-          Zoom
-          <input type="range" min={0.05} max={1} step={0.05} value={ui.wheel_sensitivity}
-            onChange={(e) => onUiChange({ wheel_sensitivity: Number(e.target.value) })} />
-        </label>
-        <details className="toolbar-details">
-          <summary>Display</summary>
-          <div className="toolbar-details-content">
-            <label className="inline">Node size
-              <input type="range" min={8} max={48} step={1} value={ui.node_size}
-                onChange={(e) => onUiChange({ node_size: Number(e.target.value) })} />
-            </label>
-            <label className="inline">Font
-              <input type="range" min={6} max={16} step={1} value={ui.font_size}
-                onChange={(e) => onUiChange({ font_size: Number(e.target.value) })} />
-            </label>
-            <label className="inline">Edge W
-              <input type="range" min={0.5} max={4} step={0.25} value={ui.edge_width}
-                onChange={(e) => onUiChange({ edge_width: Number(e.target.value) })} />
-            </label>
-            <label className="inline">Edge alpha
-              <input type="range" min={0.2} max={1} step={0.05} value={ui.edge_opacity}
-                onChange={(e) => onUiChange({ edge_opacity: Number(e.target.value) })} />
-            </label>
-          </div>
-        </details>
-        <button type="button" className="primary" onClick={onPersistUi}>
-          Save UI prefs
-        </button>
-        <button type="button" className="ghost" onClick={() => setShowLegend(!showLegend)}>
-          {showLegend ? "Hide legend" : "Legend"}
-        </button>
-        <span className="toolbar-status">{status}{graphEmpty ? " (empty)" : ""}</span>
-      </div>
-      <div className="graph-sidebar">
-        <div className="sidebar-tabs">
-          <button type="button" className={sidebarTab === "queries" ? "sidebar-tab active" : "sidebar-tab"} onClick={() => setSidebarTab("queries")}>Queries</button>
-          <button type="button" className={sidebarTab === "filters" ? "sidebar-tab active" : "sidebar-tab"} onClick={() => setSidebarTab("filters")}>Filters</button>
-          <button type="button" className={sidebarTab === "path" ? "sidebar-tab active" : "sidebar-tab"} onClick={() => setSidebarTab("path")}>Path</button>
+    <div className="graph-panel">
+      {/* Full-screen graph canvas */}
+      <div ref={containerRef} className="cy" />
+
+      {graphEmpty && (
+        <div className="graph-empty-state"><p>Run a query to explore the graph</p></div>
+      )}
+
+      {/* Floating top-left: collapsible query drawer (BloodHound-style) */}
+      <div className={`bh-drawer ${drawerOpen ? "bh-drawer-open" : ""}`}>
+        <div className="bh-drawer-tabs">
+          <button type="button" className={sidebarTab === "queries" ? "bh-tab active" : "bh-tab"} onClick={() => { setSidebarTab("queries"); setDrawerOpen(true); }} title="Queries">🔍</button>
+          <button type="button" className={sidebarTab === "path" ? "bh-tab active" : "bh-tab"} onClick={() => { setSidebarTab("path"); setDrawerOpen(true); }} title="Pathfinding">◇</button>
+          <button type="button" className={sidebarTab === "filters" ? "bh-tab active" : "bh-tab"} onClick={() => { setSidebarTab("filters"); setDrawerOpen(true); }} title="Filters">⚙</button>
+          <button type="button" className="bh-tab" onClick={() => setShowCustomQuery(true)} title="Custom query">{"</>"}</button>
+          <button type="button" className="bh-tab bh-tab-toggle" onClick={() => setDrawerOpen(!drawerOpen)} title={drawerOpen ? "Collapse" : "Expand"}>{drawerOpen ? "▲" : "▼"}</button>
         </div>
 
-        {sidebarTab === "queries" && (
-          <div className="sidebar-tab-content">
-            <div className="query-toolbar">
-              <details className="query-search-collapse">
-                <summary className="query-search-toggle">Search</summary>
-                <div className="sidebar-search">
-                  <input type="text" placeholder="Filter queries..." value={querySearch}
-                    onChange={(e) => setQuerySearch(e.target.value)} className="sidebar-search-input" autoFocus />
-                  {querySearch && (
-                    <button type="button" className="sidebar-search-clear" onClick={() => setQuerySearch("")}>&times;</button>
-                  )}
-                </div>
-              </details>
-              <button type="button" className="sidebar-custom-query-btn" onClick={() => setShowCustomQuery(true)}>Custom</button>
+        {drawerOpen && sidebarTab === "queries" && (
+          <div className="bh-drawer-body">
+            <div className="sidebar-search">
+              <input type="text" placeholder="Search queries..." value={querySearch}
+                onChange={(e) => setQuerySearch(e.target.value)} className="sidebar-search-input" />
+              {querySearch && <button type="button" className="sidebar-search-clear" onClick={() => setQuerySearch("")}>&times;</button>}
             </div>
             {(() => {
               const filtered = graphQueries.filter(q =>
@@ -698,66 +630,61 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi, backendType = 
                 return acc;
               }, {});
               return Object.entries(grouped).sort(([a],[b]) => a.localeCompare(b)).map(([cat, queries]) => (
-                <details key={cat} className="sidebar-section" open>
-                  <summary className="sidebar-section-header">{cat} <span className="badge">{queries.length}</span></summary>
-                  <div className="sidebar-query-list">
-                    {queries.map(q => (
-                      <button key={q.name} type="button"
-                        className={`sidebar-query-btn ${activeQuery === q.name ? "active" : ""}`}
-                        onClick={() => void runQuery(q.name)}
-                        disabled={queryLoading}>
-                        <span className="sidebar-query-name">{q.name.replace(/_/g, " ")}</span>
-                        <span className="sidebar-query-desc">{q.description}</span>
-                      </button>
-                    ))}
-                  </div>
+                <details key={cat} className="bh-group" open>
+                  <summary className="bh-group-header">{cat} <span className="badge">{queries.length}</span></summary>
+                  {queries.map(q => (
+                    <button key={q.name} type="button"
+                      className={`bh-query ${activeQuery === q.name ? "active" : ""}`}
+                      onClick={() => { void runQuery(q.name); setDrawerOpen(false); }}
+                      disabled={queryLoading}>
+                      <span className="bh-query-name">{q.name.replace(/_/g, " ")}</span>
+                      <span className="bh-query-desc">{q.description}</span>
+                    </button>
+                  ))}
                 </details>
               ));
             })()}
           </div>
         )}
 
-        {sidebarTab === "filters" && (
-          <div className="sidebar-tab-content">
-            <div className="sidebar-section">
-              <div className="sidebar-section-header">Search</div>
-              <div className="sidebar-search">
-                <input type="text" placeholder="Search nodes..." value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)} className="sidebar-search-input" />
-                {searchQuery && (
-                  <button type="button" className="sidebar-search-clear" onClick={() => setSearchQuery("")}>&times;</button>
-                )}
-              </div>
-              {searchResults.length > 0 && (
-                <div className="sidebar-results">
-                  {searchResults.map((r) => (
-                    <button key={r.id} type="button" className="sidebar-result"
-                      onClick={() => {
-                        const cy = cyRef.current;
-                        if (!cy) return;
-                        const node = cy.getElementById(r.id);
-                        if (node.length) { cy.animate({ center: { eles: node }, zoom: 2 }, { duration: 300 }); node.select(); }
-                      }}>
-                      <span className="color-swatch" style={{ backgroundColor: r.color }} />
-                      <span className="sidebar-result-kind">{r.kind}</span>
-                      <span className="sidebar-result-label">{r.label}</span>
-                    </button>
-                  ))}
+        {drawerOpen && sidebarTab === "path" && (
+          <div className="bh-drawer-body">
+            {backendType === "sqlite" ? (
+              <p className="sidebar-hint">Path queries require Neo4j backend</p>
+            ) : (
+              <div className="bh-path">
+                <div className="bh-path-row"><span className="bh-path-dot start" /><span>{pathStart?.label || "Right-click a node → Set as start"}</span></div>
+                <div className="bh-path-row"><span className="bh-path-dot end" /><span>{pathEnd?.label || "Right-click a node → Set as end"}</span></div>
+                <div className="bh-path-actions">
+                  <button type="button" className="primary" onClick={() => void findPath()} disabled={!pathStart || !pathEnd}>Find Path</button>
+                  <button type="button" className="ghost" onClick={clearPath}>Clear</button>
                 </div>
-              )}
-            </div>
-            <div className="sidebar-section">
-              <div className="sidebar-section-header">
-                Node Types
-                <button type="button" className="sidebar-toggle-all" onClick={() => {
-                  if (graphStats) {
-                    const allKinds = Object.keys(graphStats.node_counts);
-                    setEnabledKinds(prev => prev.size === allKinds.length ? new Set() : new Set(allKinds));
-                  }
-                }}>
-                  {enabledKinds.size === Object.keys(graphStats?.node_counts || {}).length ? "None" : "All"}
-                </button>
               </div>
+            )}
+          </div>
+        )}
+
+        {drawerOpen && sidebarTab === "filters" && (
+          <div className="bh-drawer-body">
+            <div className="sidebar-search">
+              <input type="text" placeholder="Search nodes..." value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)} className="sidebar-search-input" />
+              {searchQuery && <button type="button" className="sidebar-search-clear" onClick={() => setSearchQuery("")}>&times;</button>}
+            </div>
+            {searchResults.length > 0 && (
+              <div className="sidebar-results">
+                {searchResults.slice(0, 20).map((r) => (
+                  <button key={r.id} type="button" className="sidebar-result"
+                    onClick={() => { const cy = cyRef.current; if (!cy) return; const node = cy.getElementById(r.id); if (node.length) { cy.animate({ center: { eles: node }, zoom: 2 }, { duration: 300 }); node.select(); } }}>
+                    <span className="color-swatch" style={{ backgroundColor: r.color }} />
+                    <span className="sidebar-result-kind">{r.kind}</span>
+                    <span className="sidebar-result-label">{r.label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            <details className="bh-group">
+              <summary className="bh-group-header">Node Types</summary>
               {graphStats && Object.entries(graphStats.node_counts).map(([kind, count]) => (
                 <label key={kind} className="sidebar-filter">
                   <input type="checkbox" checked={enabledKinds.has(kind)}
@@ -767,108 +694,82 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi, backendType = 
                   <span className="badge">{count}</span>
                 </label>
               ))}
-            </div>
-            <div className="sidebar-section">
-              <div className="sidebar-section-header">Quick Actions</div>
-              <div className="sidebar-actions">
-                <button type="button" className="ghost" onClick={() => setEnabledKinds(new Set(["Host"]))}>Load hosts only</button>
-                <button type="button" className="ghost" onClick={() => { if (graphStats) setEnabledKinds(new Set(Object.keys(graphStats.node_counts))); }}>Load full graph</button>
-                <button type="button" className="ghost" onClick={() => void loadGraph()}>Refresh</button>
-              </div>
+            </details>
+            <div className="bh-actions">
+              <button type="button" className="ghost" onClick={() => void loadGraph()}>Reload graph</button>
+              <button type="button" className="ghost" onClick={() => cyRef.current?.fit(undefined, 24)}>Fit</button>
             </div>
           </div>
         )}
+      </div>
 
-        {sidebarTab === "path" && (
-          <div className="sidebar-tab-content">
-            <div className="sidebar-section">
-              <div className="sidebar-section-header">Path Finder</div>
-              {backendType === "sqlite" ? (
-                <p className="sidebar-hint">Path queries require Neo4j</p>
-              ) : (
-                <div className="path-finder">
-                  <div className="path-node-display"><span className="path-label">Start:</span>{pathStart ? <span className="path-node-name">{pathStart.label}</span> : <span className="path-node-placeholder">Right-click node</span>}</div>
-                  <div className="path-node-display"><span className="path-label">End:</span>{pathEnd ? <span className="path-node-name">{pathEnd.label}</span> : <span className="path-node-placeholder">Right-click node</span>}</div>
-                  <div className="path-actions">
-                    <button type="button" className="primary" onClick={() => void findPath()} disabled={!pathStart || !pathEnd}>Find path</button>
-                    <button type="button" className="ghost" onClick={clearPath}>Clear</button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
+      {/* Floating bottom-left: layout selector + status */}
+      <div className="bh-bottom-bar">
+        <select value={ui.graph_layout} onChange={(e) => onUiChange({ graph_layout: e.target.value })} className="bh-layout-select">
+          {LAYOUTS.map((l) => <option key={l} value={l}>{l}</option>)}
+        </select>
+        <span className="bh-status">{status}</span>
       </div>
-      <div className="graph-canvas-wrap">
-        <div ref={containerRef} className="cy" />
-        {graphEmpty && (
-          <div className="graph-empty-state">
-            <p>Run a query to explore the graph</p>
+
+      {/* Floating bottom-left: legend */}
+      {showLegend && Object.keys(typeColors).length > 0 && (
+        <div className="graph-legend">
+          <div className="graph-legend-header">
+            <span>Legend</span>
+            <button type="button" className="ghost" onClick={() => setShowLegend(false)}>&times;</button>
           </div>
-        )}
-        {tooltip && (
-          <div className="graph-tooltip" style={{ left: tooltip.x, top: tooltip.y }}>
-            <span className="graph-tooltip-kind">{tooltip.kind}</span>
-            <span className="graph-tooltip-label">{tooltip.label}</span>
-          </div>
-        )}
-        {showLegend && Object.keys(typeColors).length > 0 && (
-          <div className="graph-legend">
-            <div className="graph-legend-header">
-              <span>Legend</span>
-              <button type="button" className="ghost" onClick={() => setShowLegend(false)}>&times;</button>
+          {Object.entries(typeColors).map(([kind, color]) => (
+            <div key={kind} className="graph-legend-item">
+              <span className="color-swatch" style={{ backgroundColor: color }} />
+              <span>{kind}</span>
             </div>
-            {Object.entries(typeColors).map(([kind, color]) => (
-              <div key={kind} className="graph-legend-item">
-                <span className="color-swatch" style={{ backgroundColor: color }} />
-                <span>{kind}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+          ))}
+        </div>
+      )}
+
+      {/* Tooltip */}
+      {tooltip && (
+        <div className="graph-tooltip" style={{ left: tooltip.x, top: tooltip.y }}>
+          <span className="graph-tooltip-kind">{tooltip.kind}</span>
+          <span className="graph-tooltip-label">{tooltip.label}</span>
+        </div>
+      )}
+
+      {/* Context menu */}
       {contextMenu && (
         <div className="graph-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={(e) => e.stopPropagation()}>
           <button type="button" onClick={() => { setPathStart({ id: contextMenu.nodeId, label: contextMenu.nodeLabel }); setContextMenu(null); }}>Set as path start</button>
           <button type="button" onClick={() => { setPathEnd({ id: contextMenu.nodeId, label: contextMenu.nodeLabel }); setContextMenu(null); }}>Set as path end</button>
-          <button type="button" onClick={() => void showNeighbors(contextMenu.nodeId)}>Show neighbors</button>
+          <button type="button" onClick={() => void showNeighbors(contextMenu.nodeId)}>Expand neighbors</button>
           <hr />
           <button type="button" onClick={() => { cyRef.current?.getElementById(contextMenu.nodeId)?.style("display", "none"); setContextMenu(null); }}>Hide node</button>
           <button type="button" onClick={() => { navigator.clipboard.writeText(contextMenu.nodeId); setContextMenu(null); }}>Copy ID</button>
         </div>
       )}
-      <div className="graph-inspector">
-        <div className="inspector-title-row">
-          <h3 className="inspector-title">Inspector</h3>
-          <button type="button" className="ghost inspector-close" onClick={() => setSelected(null)}>&times;</button>
-        </div>
-        {selected && (
-          <div className="inspector-body">
-            <div className="inspector-header">
-              <span className="inspector-kind">{selected.kind}</span>
-            </div>
-            <div className="inspector-label">
-              {"label" in selected ? String((selected as { label: string }).label) : selected.kind}
-            </div>
-            <div className="inspector-id">{selected.id}</div>
-            {"source" in selected && (
-              <div className="inspector-edge-endpoints">
-                {(selected as { source: string; target: string }).source} &rarr; {(selected as { source: string; target: string }).target}
-              </div>
-            )}
-            {Object.keys(selected.properties).length > 0 && (
-              <div className="inspector-props">
-                {Object.entries(selected.properties).map(([k, v]) => (
-                  <div key={k} className="inspector-prop">
-                    <span className="inspector-prop-key">{k}</span>
-                    <span className="inspector-prop-val">{String(v)}</span>
-                  </div>
-                ))}
-              </div>
-            )}
+
+      {/* Right panel: inspector (slides in when node selected) */}
+      {selected && (
+        <div className="bh-inspector">
+          <div className="bh-inspector-head">
+            <span className="bh-inspector-icon" style={{ backgroundColor: (selected as GraphNode).color || typeColors[selected.kind] || DEFAULT_NODE_COLOR }}>{selected.kind[0]}</span>
+            <span className="bh-inspector-label">{"label" in selected ? String((selected as { label: string }).label) : selected.kind}</span>
+            <button type="button" className="ghost bh-inspector-close" onClick={() => setSelected(null)}>✕</button>
           </div>
-        )}
-      </div>
+          <details className="bh-inspector-section" open>
+            <summary>Object Information</summary>
+            <div className="bh-inspector-props">
+              <div className="bh-prop"><span className="bh-prop-key">Kind</span><span className="bh-prop-val">{selected.kind}</span></div>
+              <div className="bh-prop"><span className="bh-prop-key">ID</span><span className="bh-prop-val">{selected.id}</span></div>
+              {"source" in selected && (
+                <div className="bh-prop"><span className="bh-prop-key">Edge</span><span className="bh-prop-val">{(selected as {source: string; target: string}).source} → {(selected as {source: string; target: string}).target}</span></div>
+              )}
+              {Object.entries(selected.properties).map(([k, v]) => (
+                <div key={k} className="bh-prop"><span className="bh-prop-key">{k}</span><span className="bh-prop-val">{String(v)}</span></div>
+              ))}
+            </div>
+          </details>
+        </div>
+      )}
       {showCustomQuery && (
         <div className="query-modal-overlay" onClick={() => setShowCustomQuery(false)}>
           <div className="query-modal" onClick={(e) => e.stopPropagation()}>
