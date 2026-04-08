@@ -35,6 +35,7 @@ from gossamer.plugin_store import (
 )
 from gossamer.scanner_runner import run_scanner, stop_scanner
 from gossamer.pipeline import ingest_and_store
+from gossamer.response_store import get_response, list_responses, search_responses
 from gossamer.queries.builtins import *  # noqa: F401,F403 - register builtins
 from gossamer.queries.registry import all_queries, get_query
 from gossamer.queries.yaml_loader import load_yaml_queries
@@ -699,6 +700,47 @@ def api_scanner_run(
 def api_scanner_stop(plugin_id: str) -> dict[str, Any]:
     """Stop a running scanner."""
     return stop_scanner(plugin_id)
+
+
+
+# --- Response storage endpoints ---
+
+
+@api.get("/responses/{response_id}")
+def api_response_get(
+    response_id: str,
+    settings: Annotated[Settings, Depends(get_effective_settings)],
+) -> dict[str, Any]:
+    from gossamer.project import open_project
+    try:
+        proj = open_project(settings.active_project)
+        resp_dir = proj.responses_dir
+    except Exception:
+        resp_dir = Path.home() / ".gossamer" / "projects" / "default" / "responses"
+    data = get_response(resp_dir, response_id)
+    if data is None:
+        raise HTTPException(404, "Response not found")
+    return data
+
+
+@api.get("/responses")
+def api_responses_list(
+    settings: Annotated[Settings, Depends(get_effective_settings)],
+    url: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> dict[str, Any]:
+    from gossamer.project import open_project
+    try:
+        proj = open_project(settings.active_project)
+        resp_dir = proj.responses_dir
+    except Exception:
+        resp_dir = Path.home() / ".gossamer" / "projects" / "default" / "responses"
+    if url:
+        results = search_responses(resp_dir, url, limit=limit)
+    else:
+        results = list_responses(resp_dir, limit=limit, offset=offset)
+    return {"responses": results, "count": len(results)}
 
 
 app.include_router(api)
