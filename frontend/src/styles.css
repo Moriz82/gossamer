@@ -1684,6 +1684,7 @@ button.ghost-inline:hover:not(:disabled) {
 .ops-presets { margin: 12px 0 8px; }
 .ops-presets-header { display: flex; align-items: center; gap: 10px; }
 .ops-preset-pills { display: flex; gap: 4px; flex-wrap: wrap; }
+.pill-custom { background: var(--c-surface2, #151b27); border-style: dashed; cursor: default; }
 
 /* Module checklist */
 .ops-modules { margin: 10px 0; }

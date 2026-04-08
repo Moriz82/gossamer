@@ -474,14 +474,47 @@ def ingest_crawl_stream(
             return None
         return next((m for m in body.modules if m.id == mod_id and m.enabled), None)
 
+    def _find_default_wordlist() -> str | None:
+        """Find a reasonable default wordlist for fuzzing."""
+        from gossamer.wordlists import get_search_dirs
+        candidates = [
+            "SecLists/Discovery/Web-Content/common.txt",
+            "SecLists/Discovery/Web-Content/directory-list-2.3-small.txt",
+            "seclists/Discovery/Web-Content/common.txt",
+            "dirb/common.txt",
+            "dirbuster/directory-list-lowercase-2.3-small.txt",
+        ]
+        for d in get_search_dirs():
+            dp = Path(d)
+            if not dp.is_dir():
+                continue
+            for c in candidates:
+                wl = dp / c
+                if wl.is_file():
+                    return str(wl)
+        return None
+
     def _run_tool(plugin_id: str, targets: list[str], phase_label: str, mod_cfg: ModuleConfig | None = None) -> None:
         ex_args: list[str] = []
+        wordlist = mod_cfg.wordlist if mod_cfg and mod_cfg.wordlist else None
+
+        if plugin_id in ("ffuf", "feroxbuster"):
+            if not wordlist:
+                wordlist = _find_default_wordlist()
+            if not wordlist:
+                progress_q.put({"type": "scan_progress", "scanner": plugin_id, "phase": "error",
+                                "detail": "No wordlist configured and no default found. Install SecLists or assign a wordlist.",
+                                "pipeline_phase": phase_label})
+                return
+            ex_args.extend(["-w", wordlist])
+            progress_q.put({"type": "scan_progress", "scanner": plugin_id, "phase": "starting",
+                            "detail": f"wordlist: {Path(wordlist).name}", "pipeline_phase": phase_label})
+        else:
+            progress_q.put({"type": "scan_progress", "scanner": plugin_id, "phase": "starting", "pipeline_phase": phase_label})
+
         if mod_cfg:
-            ex_args = list(mod_cfg.extra_args)
-            if mod_cfg.wordlist:
-                if plugin_id in ("ffuf", "feroxbuster"):
-                    ex_args.extend(["-w", mod_cfg.wordlist])
-        progress_q.put({"type": "scan_progress", "scanner": plugin_id, "phase": "starting", "pipeline_phase": phase_label})
+            ex_args.extend(mod_cfg.extra_args)
+
         try:
             result = run_scanner(plugin_id, targets, extra_args=ex_args if ex_args else None)
             if result.get("ok") and result.get("output_file"):

@@ -55,10 +55,8 @@ export default function OperationsPanel() {
 
   // When preset changes, update enabled modules
   useEffect(() => {
-    if (!selectedPreset) {
-      setEnabledModules(new Set());
-      return;
-    }
+    if (!selectedPreset || selectedPreset === "custom") return;
+    if (selectedPreset === "none") { setEnabledModules(new Set()); return; }
     const mods = new Set<string>();
     if (selectedPreset === "light") { mods.add("crawl_audit"); }
     else if (selectedPreset === "medium") { mods.add("crawl_audit"); mods.add("nuclei"); }
@@ -70,7 +68,7 @@ export default function OperationsPanel() {
     setEnabledModules(prev => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
-      setSelectedPreset(null); // custom selection
+      if (selectedPreset && selectedPreset !== "custom") setSelectedPreset("custom");
       return next;
     });
   }
@@ -164,11 +162,15 @@ export default function OperationsPanel() {
             } else if (evt.type === "scan_progress") {
               const phase = evt.pipeline_phase || "scan";
               if (evt.phase === "error") {
-                log(phase, `${evt.scanner}: ERROR — ${evt.detail}`, "error");
+                log(phase, `✗ ${evt.scanner}: ${evt.detail}`, "error");
               } else if (evt.phase === "complete" && evt.ingested) {
-                log(phase, `${evt.scanner}: done (${evt.ingested.nodes} nodes, ${evt.ingested.edges} edges)`, "success");
+                log(phase, `✓ ${evt.scanner}: ${evt.ingested.nodes} nodes, ${evt.ingested.edges} edges`, "success");
+              } else if (evt.phase === "complete") {
+                log(phase, `✓ ${evt.scanner}: done (no new findings)`, "info");
+              } else if (evt.phase === "starting" && evt.detail) {
+                log(phase, `▸ ${evt.scanner}: starting (${evt.detail})`, "info");
               } else {
-                log(phase, `${evt.scanner}: ${evt.phase}`, "info");
+                log(phase, `▸ ${evt.scanner}: ${evt.phase}`, "info");
               }
             } else if (evt.type === "complete") {
               setCrawlProgress(null);
@@ -226,10 +228,11 @@ export default function OperationsPanel() {
             <div className="ops-presets-header">
               <span className="ops-label">Preset</span>
               <div className="ops-preset-pills">
-                <button type="button" className={`pill ${!selectedPreset ? "pill-active" : ""}`} onClick={() => setSelectedPreset(null)}>None</button>
+                <button type="button" className={`pill ${selectedPreset === "none" || !selectedPreset ? "pill-active" : ""}`} onClick={() => { setSelectedPreset("none"); setEnabledModules(new Set()); }}>None</button>
                 {presets?.map(p => (
                   <button key={p.name} type="button" className={`pill ${selectedPreset === p.name ? "pill-active" : ""}`} onClick={() => setSelectedPreset(p.name)}>{p.name}</button>
                 ))}
+                {selectedPreset === "custom" && <span className="pill pill-active pill-custom">Custom</span>}
               </div>
             </div>
           </div>
