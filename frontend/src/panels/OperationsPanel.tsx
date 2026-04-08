@@ -264,6 +264,17 @@ export default function OperationsPanel() {
         </details>
       </div>
 
+      <div className="ops-resize-handle" onMouseDown={(e) => {
+        e.preventDefault();
+        const logEl = e.currentTarget.nextElementSibling as HTMLElement;
+        if (!logEl) return;
+        const startX = e.clientX;
+        const startW = logEl.offsetWidth;
+        const onMove = (ev: MouseEvent) => { logEl.style.width = `${Math.max(200, startW - (ev.clientX - startX))}px`; };
+        const onUp = () => { document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp); };
+        document.addEventListener("mousemove", onMove);
+        document.addEventListener("mouseup", onUp);
+      }} />
       <div className="ops-log">
         <div className="ops-log-header">
           <span>Activity Log</span>

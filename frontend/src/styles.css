@@ -1665,8 +1665,10 @@ button.ghost-inline:hover:not(:disabled) {
 /* ============================================
    Operations panel — two-column layout
    ============================================ */
-.ops-layout { display: grid; grid-template-columns: 1fr 380px; height: 100%; overflow: hidden; }
-.ops-config { overflow-y: auto; padding: 16px 20px 48px; }
+.ops-layout { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+.ops-config { flex: 1; min-width: 300px; overflow-y: auto; padding: 16px 20px 48px; }
+.ops-resize-handle { width: 5px; cursor: col-resize; background: var(--c-border, #333); flex-shrink: 0; transition: background 0.15s; }
+.ops-resize-handle:hover, .ops-resize-handle:active { background: var(--c-accent, #5b9bd5); }
 .ops-section { border: 1px solid var(--c-border, #333); border-radius: 6px; margin-bottom: 12px; padding: 0; }
 .ops-section summary { list-style: none; cursor: pointer; }
 .ops-section summary::-webkit-details-marker { display: none; }
@@ -1697,7 +1699,7 @@ button.ghost-inline:hover:not(:disabled) {
 .ops-pipeline-actions { display: flex; gap: 8px; margin-top: 10px; }
 
 /* Activity log */
-.ops-log { display: flex; flex-direction: column; border-left: 1px solid var(--c-border, #333); background: var(--c-bg, #060810); }
+.ops-log { display: flex; flex-direction: column; background: var(--c-bg, #060810); width: 380px; min-width: 200px; flex-shrink: 0; }
 .ops-log-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--c-border, #333); font-size: 0.82rem; font-weight: 600; }
 .ops-log-body { flex: 1; overflow-y: auto; padding: 6px 0; font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 0.72rem; }
 .ops-log-empty { padding: 20px 14px; color: var(--c-text-muted, #666); text-align: center; font-family: inherit; }
