@@ -69,6 +69,7 @@
 html, body {
   margin: 0;
   padding: 0;
+  height: 100%;
   background: var(--c-bg);
   color: var(--c-text);
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -157,7 +158,7 @@ html, body {
 .main-area {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
 }
@@ -465,6 +466,8 @@ html, body {
 .panel-block {
   padding: 20px 24px 48px;
   max-width: 920px;
+  overflow-y: auto;
+  flex: 1;
 }
 
 .panel-block h2 {
