@@ -1522,7 +1522,13 @@ button.ghost-inline:hover:not(:disabled) {
 .response-body { max-height: 60vh; overflow: auto; padding: 10px; background: var(--bg-alt, #111); border: 1px solid var(--border); border-radius: 4px; font-size: 0.75rem; white-space: pre-wrap; word-break: break-all; }
 
 /* --- Custom Query Modal --- */
-.sidebar-custom-query-btn { width: 100%; padding: 6px 10px; margin: 4px 0 8px; background: var(--bg-alt, #1e1e1e); border: 1px dashed var(--border); border-radius: 4px; color: var(--fg); cursor: pointer; font-size: 0.8rem; text-align: center; }
+.query-toolbar { display: flex; align-items: center; gap: 4px; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+.query-search-collapse { flex: 1; }
+.query-search-collapse summary { cursor: pointer; font-size: 0.75rem; color: var(--fg-dim, #999); padding: 2px 0; list-style: none; }
+.query-search-collapse summary::-webkit-details-marker { display: none; }
+.query-search-collapse summary::before { content: "⌕ "; }
+.query-search-collapse[open] .sidebar-search { margin-top: 4px; }
+.sidebar-custom-query-btn { padding: 3px 8px; background: var(--bg-alt, #1e1e1e); border: 1px dashed var(--border); border-radius: 4px; color: var(--fg); cursor: pointer; font-size: 0.72rem; white-space: nowrap; }
 .sidebar-custom-query-btn:hover { border-color: var(--accent); }
 .query-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 100; }
 .query-modal { background: var(--bg-card, #1a1a1a); border: 1px solid var(--border); border-radius: 8px; width: 560px; max-height: 80vh; overflow-y: auto; padding: 0; }

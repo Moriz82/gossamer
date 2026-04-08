@@ -45,6 +45,17 @@ type LabelMode = "smart" | "full" | "hidden" | "kind";
 
 const LAYOUTS = ["cose", "breadthfirst", "circle", "grid", "concentric", "random"] as const;
 
+function layoutOpts(name: string): Record<string, unknown> {
+  const base = { name, animate: false };
+  if (name === "cose") {
+    return { ...base, nodeRepulsion: () => 8000, idealEdgeLength: () => 80, edgeElasticity: () => 100, gravity: 0.25, numIter: 1000, nodeDimensionsIncludeLabels: true };
+  }
+  if (name === "breadthfirst") {
+    return { ...base, spacingFactor: 1.5 };
+  }
+  return base;
+}
+
 const NODE_KINDS = ["Host", "Endpoint", "Form", "Finding", "Source"];
 const EDGE_KINDS = ["serves", "discovered_by", "links_to", "redirects_to", "contains_form", "submits_to", "found_on"];
 const OPERATORS = ["equals", "contains", "starts_with", "gt", "lt", "is_null", "is_not_null"];
@@ -116,7 +127,8 @@ function makeStylesheet(ui: UIPrefs): Stylesheet[] {
         "line-color": "data(ec)",
         "target-arrow-color": "data(ec)",
         "target-arrow-shape": "triangle",
-        "curve-style": "bezier",
+        "curve-style": "haystack",
+        "haystack-radius": 0.5,
         opacity: ui.edge_opacity,
       },
     },
@@ -258,7 +270,7 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi, backendType = 
     }));
     cy.elements().remove();
     cy.add([...nodes, ...edges]);
-    cy.layout({ name: cur.graph_layout as cytoscape.LayoutOptions["name"], animate: false }).run();
+    cy.layout(layoutOpts(cur.graph_layout) as cytoscape.LayoutOptions).run();
     cy.fit(undefined, 24);
     setStatus(`${data.nodes.length} nodes, ${data.edges.length} edges`);
     setGraphEmpty(data.nodes.length === 0);
@@ -295,7 +307,7 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi, backendType = 
       }));
       cy.elements().remove();
       cy.add([...nodes, ...edges]);
-      cy.layout({ name: cur.graph_layout as cytoscape.LayoutOptions["name"], animate: false }).run();
+      cy.layout(layoutOpts(cur.graph_layout) as cytoscape.LayoutOptions).run();
       cy.fit(undefined, 24);
       setStatus(`${data.nodes.length} nodes, ${data.edges.length} edges — ${queryName}`);
       setGraphEmpty(data.nodes.length === 0);
@@ -399,7 +411,7 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi, backendType = 
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy || cy.elements().length === 0) return;
-    cy.layout({ name: ui.graph_layout as cytoscape.LayoutOptions["name"], animate: false }).run();
+    cy.layout(layoutOpts(ui.graph_layout) as cytoscape.LayoutOptions).run();
     cy.fit(undefined, 24);
   }, [ui.graph_layout]);
 
@@ -546,7 +558,7 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi, backendType = 
       const edges = data.edges.map((e) => ({ data: { id: e.id, source: e.source, target: e.target, ec: e.color || "#666", kind: e.kind } }));
       cy.elements().remove();
       cy.add([...nodes, ...edges]);
-      cy.layout({ name: cur.graph_layout as cytoscape.LayoutOptions["name"], animate: false }).run();
+      cy.layout(layoutOpts(cur.graph_layout) as cytoscape.LayoutOptions).run();
       cy.fit(undefined, 24);
       setStatus(`${data.nodes.length} nodes, ${data.edges.length} edges — custom query`);
       setGraphEmpty(data.nodes.length === 0);
@@ -567,7 +579,7 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi, backendType = 
       const edges = data.edges.map((e) => ({ data: { id: e.id, source: e.source, target: e.target, ec: e.color || "#666", kind: e.kind } }));
       cy.elements().remove();
       cy.add([...nodes, ...edges]);
-      cy.layout({ name: cur.graph_layout as cytoscape.LayoutOptions["name"], animate: false }).run();
+      cy.layout(layoutOpts(cur.graph_layout) as cytoscape.LayoutOptions).run();
       cy.fit(undefined, 24);
       setStatus(`${data.nodes.length} nodes, ${data.edges.length} edges — raw SQL`);
       setGraphEmpty(data.nodes.length === 0);
@@ -664,14 +676,19 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi, backendType = 
 
         {sidebarTab === "queries" && (
           <div className="sidebar-tab-content">
-            <div className="sidebar-search">
-              <input type="text" placeholder="Search queries..." value={querySearch}
-                onChange={(e) => setQuerySearch(e.target.value)} className="sidebar-search-input" />
-              {querySearch && (
-                <button type="button" className="sidebar-search-clear" onClick={() => setQuerySearch("")}>&times;</button>
-              )}
+            <div className="query-toolbar">
+              <details className="query-search-collapse">
+                <summary className="query-search-toggle">Search</summary>
+                <div className="sidebar-search">
+                  <input type="text" placeholder="Filter queries..." value={querySearch}
+                    onChange={(e) => setQuerySearch(e.target.value)} className="sidebar-search-input" autoFocus />
+                  {querySearch && (
+                    <button type="button" className="sidebar-search-clear" onClick={() => setQuerySearch("")}>&times;</button>
+                  )}
+                </div>
+              </details>
+              <button type="button" className="sidebar-custom-query-btn" onClick={() => setShowCustomQuery(true)}>Custom</button>
             </div>
-            <button type="button" className="sidebar-custom-query-btn" onClick={() => setShowCustomQuery(true)}>Custom Query</button>
             {(() => {
               const filtered = graphQueries.filter(q =>
                 !querySearch || q.name.toLowerCase().includes(querySearch.toLowerCase()) || q.description.toLowerCase().includes(querySearch.toLowerCase())

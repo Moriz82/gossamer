@@ -368,7 +368,7 @@ export default function ScannersPanel() {
                   )}
                 </div>
                 <div className="plugin-actions">
-                  {!p.installed ? (
+                  {!p.installed && !p.binary_found ? (
                     <button type="button" className="primary" disabled={pluginBusy === p.id}
                       onClick={() => void installPlugin(p.id)}>
                       {pluginBusy === p.id ? "Installing..." : "Install"}
@@ -381,7 +381,7 @@ export default function ScannersPanel() {
                   ) : (
                     <span className="plugin-installed-badge">Installed</span>
                   )}
-                  {p.installed && (
+                  {(p.installed || p.binary_found) && (
                     <button type="button" className="ghost" disabled={pluginBusy === p.id}
                       onClick={() => void uninstallPlugin(p.id)}>
                       Uninstall
