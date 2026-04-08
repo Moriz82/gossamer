@@ -1451,3 +1451,18 @@ button.ghost-inline:hover:not(:disabled) {
   font-size: 12px;
   color: var(--c-text-muted);
 }
+
+/* --- Plugin Store Overhaul --- */
+.plugin-store-actions { display: flex; align-items: center; gap: 8px; }
+.plugin-filters { display: flex; align-items: center; gap: 12px; margin: 8px 0 12px; flex-wrap: wrap; }
+.plugin-category-pills { display: flex; gap: 4px; flex-wrap: wrap; }
+.pill { padding: 3px 10px; border-radius: 12px; border: 1px solid var(--border); background: transparent; color: var(--fg); font-size: 0.78rem; cursor: pointer; text-transform: uppercase; letter-spacing: 0.04em; }
+.pill:hover { border-color: var(--accent); }
+.pill-active { background: var(--accent); color: #000; border-color: var(--accent); }
+.plugin-search { flex: 1; min-width: 140px; max-width: 260px; padding: 4px 8px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 4px; color: var(--fg); font-size: 0.82rem; }
+.badge-category { background: var(--bg-alt, #2a2a2a); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.03em; }
+@keyframes shimmer {
+  0% { background-position: -200px 0; }
+  100% { background-position: 200px 0; }
+}
+.plugin-card.installing { background: linear-gradient(90deg, var(--bg-card) 25%, var(--bg-alt, #2a2a2a) 50%, var(--bg-card) 75%); background-size: 400px 100%; animation: shimmer 1.5s infinite; }
