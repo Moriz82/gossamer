@@ -45,6 +45,10 @@ type LabelMode = "smart" | "full" | "hidden" | "kind";
 
 const LAYOUTS = ["cose", "breadthfirst", "circle", "grid", "concentric", "random"] as const;
 
+const NODE_KINDS = ["Host", "Endpoint", "Form", "Finding", "Source"];
+const EDGE_KINDS = ["serves", "discovered_by", "links_to", "redirects_to", "contains_form", "submits_to", "found_on"];
+const OPERATORS = ["equals", "contains", "starts_with", "gt", "lt", "is_null", "is_not_null"];
+
 function smartLabel(kind: string, props: Record<string, unknown>, mode: LabelMode, maxLen: number): string {
   if (mode === "hidden") return "";
   if (mode === "kind") return kind;
@@ -166,6 +170,17 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi, backendType = 
   const [pathStart, setPathStart] = useState<{id: string; label: string} | null>(null);
   const [pathEnd, setPathEnd] = useState<{id: string; label: string} | null>(null);
   const [contextMenu, setContextMenu] = useState<{x: number; y: number; nodeId: string; nodeLabel: string} | null>(null);
+  const [graphEmpty, setGraphEmpty] = useState(false);
+  const [queryLoading, setQueryLoading] = useState(false);
+  const [showCustomQuery, setShowCustomQuery] = useState(false);
+  const [customTab, setCustomTab] = useState<"visual" | "raw">("visual");
+  const [builderKind, setBuilderKind] = useState("Endpoint");
+  const [builderFilters, setBuilderFilters] = useState<{property: string; operator: string; value: string}[]>([]);
+  const [builderRel, setBuilderRel] = useState<{edge_kind: string; direction: string}[]>([]);
+  const [rawSql, setRawSql] = useState("");
+  const [rawHistory, setRawHistory] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem("gossamer_raw_history") || "[]"); } catch { return []; }
+  });
 
   const applyStyles = useCallback(() => {
     const cy = cyRef.current;
@@ -427,6 +442,52 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi, backendType = 
     setPathEnd(null);
   }
 
+  async function runVisualQuery() {
+    const cy = cyRef.current;
+    if (!cy) return;
+    setQueryLoading(true);
+    try {
+      const body = { node_kind: builderKind, filters: builderFilters, relationships: builderRel };
+      const data = await apiJson<{nodes: GraphNode[]; edges: GraphEdge[]}>("/api/graph/query/build", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      });
+      const cur = uiRef.current;
+      const nodes = data.nodes.map((n) => ({ data: { id: n.id, label: smartLabel(n.kind, n.properties, labelModeRef.current, cur.label_max_len), bg: n.color || DEFAULT_NODE_COLOR, kind: n.kind, props: n.properties, size: n.kind === "Host" ? cur.node_size * 1.4 : cur.node_size } }));
+      const edges = data.edges.map((e) => ({ data: { id: e.id, source: e.source, target: e.target, ec: e.color || "#666", kind: e.kind } }));
+      cy.elements().remove();
+      cy.add([...nodes, ...edges]);
+      cy.layout({ name: cur.graph_layout as cytoscape.LayoutOptions["name"], animate: false }).run();
+      cy.fit(undefined, 24);
+      setStatus(`${data.nodes.length} nodes, ${data.edges.length} edges — custom query`);
+      setGraphEmpty(data.nodes.length === 0);
+      setShowCustomQuery(false);
+    } catch (e) { setStatus(`Query failed: ${e instanceof Error ? e.message : String(e)}`); } finally { setQueryLoading(false); }
+  }
+
+  async function runRawQuery() {
+    const cy = cyRef.current;
+    if (!cy || !rawSql.trim()) return;
+    setQueryLoading(true);
+    try {
+      const data = await apiJson<{nodes: GraphNode[]; edges: GraphEdge[]}>("/api/graph/query/raw", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sql: rawSql }),
+      });
+      const cur = uiRef.current;
+      const nodes = data.nodes.map((n) => ({ data: { id: n.id, label: smartLabel(n.kind, n.properties, labelModeRef.current, cur.label_max_len), bg: n.color || DEFAULT_NODE_COLOR, kind: n.kind, props: n.properties, size: n.kind === "Host" ? cur.node_size * 1.4 : cur.node_size } }));
+      const edges = data.edges.map((e) => ({ data: { id: e.id, source: e.source, target: e.target, ec: e.color || "#666", kind: e.kind } }));
+      cy.elements().remove();
+      cy.add([...nodes, ...edges]);
+      cy.layout({ name: cur.graph_layout as cytoscape.LayoutOptions["name"], animate: false }).run();
+      cy.fit(undefined, 24);
+      setStatus(`${data.nodes.length} nodes, ${data.edges.length} edges — raw SQL`);
+      setGraphEmpty(data.nodes.length === 0);
+      const history = [rawSql, ...rawHistory.filter(h => h !== rawSql)].slice(0, 10);
+      setRawHistory(history);
+      localStorage.setItem("gossamer_raw_history", JSON.stringify(history));
+      setShowCustomQuery(false);
+    } catch (e) { setStatus(`Query failed: ${e instanceof Error ? e.message : String(e)}`); } finally { setQueryLoading(false); }
+  }
+
   return (
     <div className="graph-panel">
       <div className="graph-toolbar panel-toolbar">
@@ -499,7 +560,7 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi, backendType = 
         <button type="button" className="primary" onClick={onPersistUi}>
           Save UI prefs
         </button>
-        <span className="toolbar-status">{status}</span>
+        <span className="toolbar-status">{status}{graphEmpty ? " (empty)" : ""}</span>
       </div>
       <div className="graph-sidebar">
         <div className="sidebar-section">
@@ -528,6 +589,9 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi, backendType = 
               ))}
             </div>
           )}
+          <div style={{ padding: "0 12px" }}>
+            <button type="button" className="sidebar-custom-query-btn" onClick={() => setShowCustomQuery(true)}>Custom Query</button>
+          </div>
         </div>
         <div className="sidebar-section">
           <div className="sidebar-section-header">
@@ -624,6 +688,69 @@ export default function GraphPanel({ ui, onUiChange, onPersistUi, backendType = 
           </div>
         )}
       </div>
+      {showCustomQuery && (
+        <div className="query-modal-overlay" onClick={() => setShowCustomQuery(false)}>
+          <div className="query-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="query-modal-header">
+              <h3>Custom Query</h3>
+              <button type="button" className="ghost" onClick={() => setShowCustomQuery(false)}>&times;</button>
+            </div>
+            <div className="query-modal-tabs">
+              <button type="button" className={customTab === "visual" ? "sidebar-tab active" : "sidebar-tab"} onClick={() => setCustomTab("visual")}>Visual Builder</button>
+              <button type="button" className={customTab === "raw" ? "sidebar-tab active" : "sidebar-tab"} onClick={() => setCustomTab("raw")}>Raw SQL</button>
+            </div>
+            {customTab === "visual" ? (
+              <div className="query-builder">
+                <label>Show <select value={builderKind} onChange={(e) => setBuilderKind(e.target.value)}>
+                  {NODE_KINDS.map(k => <option key={k} value={k}>{k}</option>)}
+                </select></label>
+                <div className="builder-section">
+                  <div className="builder-section-header">Where <button type="button" className="ghost" onClick={() => setBuilderFilters([...builderFilters, {property: "", operator: "equals", value: ""}])}>+ Add</button></div>
+                  {builderFilters.map((f, i) => (
+                    <div key={i} className="builder-filter-row">
+                      <input placeholder="property" value={f.property} onChange={(e) => { const next = [...builderFilters]; next[i] = {...f, property: e.target.value}; setBuilderFilters(next); }} />
+                      <select value={f.operator} onChange={(e) => { const next = [...builderFilters]; next[i] = {...f, operator: e.target.value}; setBuilderFilters(next); }}>
+                        {OPERATORS.map(o => <option key={o} value={o}>{o}</option>)}
+                      </select>
+                      {!["is_null","is_not_null"].includes(f.operator) && <input placeholder="value" value={f.value} onChange={(e) => { const next = [...builderFilters]; next[i] = {...f, value: e.target.value}; setBuilderFilters(next); }} />}
+                      <button type="button" className="ghost" onClick={() => setBuilderFilters(builderFilters.filter((_, j) => j !== i))}>&times;</button>
+                    </div>
+                  ))}
+                </div>
+                <div className="builder-section">
+                  <div className="builder-section-header">Connected to <button type="button" className="ghost" onClick={() => setBuilderRel([...builderRel, {edge_kind: "serves", direction: "out"}])}>+ Add</button></div>
+                  {builderRel.map((r, i) => (
+                    <div key={i} className="builder-filter-row">
+                      <select value={r.edge_kind} onChange={(e) => { const next = [...builderRel]; next[i] = {...r, edge_kind: e.target.value}; setBuilderRel(next); }}>
+                        {EDGE_KINDS.map(ek => <option key={ek} value={ek}>{ek}</option>)}
+                      </select>
+                      <select value={r.direction} onChange={(e) => { const next = [...builderRel]; next[i] = {...r, direction: e.target.value}; setBuilderRel(next); }}>
+                        <option value="in">Inbound</option>
+                        <option value="out">Outbound</option>
+                      </select>
+                      <button type="button" className="ghost" onClick={() => setBuilderRel(builderRel.filter((_, j) => j !== i))}>&times;</button>
+                    </div>
+                  ))}
+                </div>
+                <button type="button" className="primary" onClick={() => void runVisualQuery()} disabled={queryLoading}>{queryLoading ? "Running..." : "Run Query"}</button>
+              </div>
+            ) : (
+              <div className="query-raw">
+                <textarea value={rawSql} onChange={(e) => setRawSql(e.target.value)} placeholder="SELECT id, kind, key, properties_json FROM nodes WHERE kind='Endpoint' LIMIT 50" rows={6} className="raw-sql-input" />
+                {rawHistory.length > 0 && (
+                  <div className="raw-history">
+                    <span className="muted">Recent:</span>
+                    {rawHistory.map((h, i) => (
+                      <button key={i} type="button" className="ghost raw-history-item" onClick={() => setRawSql(h)}>{h.slice(0, 60)}...</button>
+                    ))}
+                  </div>
+                )}
+                <button type="button" className="primary" onClick={() => void runRawQuery()} disabled={queryLoading || !rawSql.trim()}>{queryLoading ? "Running..." : "Run SQL"}</button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
