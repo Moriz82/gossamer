@@ -1,52 +1,9 @@
 import cytoscape, { type Core } from "cytoscape";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch, apiJson } from "../api";
+import "../styles/graph.css";
 
-const DEFAULT_NODE_COLOR = "#888";
-
-function nodeIconSvg(letter: string): string {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><text x="12" y="17" text-anchor="middle" font-size="15" font-weight="700" font-family="sans-serif" fill="rgba(0,0,0,0.7)">${letter}</text></svg>`;
-  return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
-}
-
-const NODE_ICON_SVGS: Record<string, string> = {
-  Host: nodeIconSvg("H"),
-  Endpoint: nodeIconSvg("E"),
-  Finding: nodeIconSvg("!"),
-  Form: nodeIconSvg("F"),
-  Source: nodeIconSvg("S"),
-};
-
-// Edges where the visual arrow should be reversed for clarity
-// (e.g. discovered_by goes Endpoint→Source but visually Source discovers Endpoint)
-const REVERSE_EDGE_DISPLAY = new Set(["discovered_by"]);
-
-type GraphNode = {
-  id: string;
-  kind: string;
-  label: string;
-  color?: string;
-  properties: Record<string, unknown>;
-};
-
-type GraphEdge = {
-  id: string;
-  kind: string;
-  source: string;
-  target: string;
-  color?: string;
-  properties: Record<string, unknown>;
-  sources: string[];
-};
-
-type SearchHit = { id: string; kind: string; label: string; color: string };
-
-type GraphStats = {
-  node_counts: Record<string, number>;
-  edge_counts: Record<string, number>;
-  total_nodes: number;
-  total_edges: number;
-};
+// ------------------------------------------------------------------ Types
 
 export type UIPrefs = {
   graph_layout: string;
@@ -58,46 +15,245 @@ export type UIPrefs = {
   wheel_sensitivity: number;
 };
 
-type LabelMode = "smart" | "full" | "hidden" | "kind";
+type GraphNode = {
+  id: string;
+  kind: string;
+  label?: string;
+  color?: string;
+  properties: Record<string, unknown>;
+};
 
-const LAYOUTS = ["cose", "breadthfirst", "circle", "grid", "concentric", "random"] as const;
+type GraphEdge = {
+  id: string;
+  kind: string;
+  source: string;
+  target: string;
+  color?: string;
+  properties?: Record<string, unknown>;
+  sources?: string[];
+};
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function layoutOpts(name: string): any {
-  const base = { name, animate: false };
-  if (name === "cose") {
-    return { ...base, nodeRepulsion: () => 8000, idealEdgeLength: () => 80, edgeElasticity: () => 100, gravity: 0.25, numIter: 1000, nodeDimensionsIncludeLabels: true };
-  }
-  if (name === "breadthfirst") {
-    return { ...base, spacingFactor: 1.5 };
-  }
-  return base;
+type Finding = {
+  id?: string | number;
+  template_id?: string;
+  name?: string;
+  severity?: string;
+  endpoint_id?: string;
+  host_id?: string;
+  node_id?: string;
+  matched_at?: string;
+  [k: string]: unknown;
+};
+
+type SelectedItem =
+  | { kind: "node"; node: GraphNode }
+  | { kind: "edge"; edge: GraphEdge }
+  | null;
+
+type Props = {
+  ui: UIPrefs;
+  onUiChange: (partial: Partial<UIPrefs>) => void;
+  onPersistUi: () => void;
+  backendType?: string;
+};
+
+// ------------------------------------------------------------------ Constants
+
+const NODE_KINDS = ["Host", "Endpoint", "Source", "Finding", "Form"] as const;
+
+const KIND_LETTER: Record<string, string> = {
+  Host: "H",
+  Endpoint: "E",
+  Source: "S",
+  Form: "F",
+  Finding: "!",
+};
+
+const KIND_COLOR_VAR: Record<string, string> = {
+  Host: "var(--kind-host)",
+  Endpoint: "var(--kind-endpoint)",
+  Source: "var(--kind-source)",
+  Form: "var(--kind-form)",
+  Finding: "var(--kind-finding)",
+};
+
+const EDGE_LEGEND: { kind: string; color: string; dash: boolean }[] = [
+  { kind: "serves", color: "oklch(52% 0.04 220)", dash: false },
+  { kind: "discovered_by", color: "oklch(48% 0.06 300)", dash: true },
+  { kind: "links_to", color: "oklch(48% 0.03 220)", dash: true },
+  { kind: "found_on", color: "oklch(60% 0.14 25)", dash: false },
+];
+
+const LAYOUTS = ["cose", "breadth", "circle", "grid"] as const;
+type LayoutChip = (typeof LAYOUTS)[number];
+
+const LAYOUT_TO_CY: Record<string, string> = {
+  cose: "cose",
+  breadth: "breadthfirst",
+  circle: "circle",
+  grid: "grid",
+};
+
+const REVERSE_EDGE_DISPLAY = new Set(["discovered_by"]);
+
+const DEFAULT_NODE_COLOR = "#888";
+
+// ------------------------------------------------------------------ Inline icons
+
+type IconProps = { size?: number; style?: React.CSSProperties };
+const ic = (d: React.ReactNode, size = 14, style?: React.CSSProperties) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={1.5}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    width={size}
+    height={size}
+    style={style}
+  >
+    {d}
+  </svg>
+);
+const Icon = {
+  search: ({ size, style }: IconProps) =>
+    ic(
+      <>
+        <circle cx="11" cy="11" r="7" />
+        <path d="m20 20-4.3-4.3" />
+      </>,
+      size,
+      style,
+    ),
+  plus: ({ size, style }: IconProps) =>
+    ic(<path d="M12 5v14M5 12h14" />, size, style),
+  close: ({ size, style }: IconProps) =>
+    ic(<path d="M6 6l12 12M18 6L6 18" />, size, style),
+  chevronR: ({ size, style }: IconProps) =>
+    ic(<path d="m9 6 6 6-6 6" />, size, style),
+  zoomIn: ({ size, style }: IconProps) =>
+    ic(
+      <>
+        <circle cx="11" cy="11" r="7" />
+        <path d="m20 20-4.3-4.3M11 8v6M8 11h6" />
+      </>,
+      size,
+      style,
+    ),
+  zoomOut: ({ size, style }: IconProps) =>
+    ic(
+      <>
+        <circle cx="11" cy="11" r="7" />
+        <path d="m20 20-4.3-4.3M8 11h6" />
+      </>,
+      size,
+      style,
+    ),
+  fit: ({ size, style }: IconProps) =>
+    ic(
+      <path d="M3 8V3h5M21 8V3h-5M3 16v5h5M21 16v5h-5" />,
+      size,
+      style,
+    ),
+  center: ({ size, style }: IconProps) =>
+    ic(
+      <>
+        <circle cx="12" cy="12" r="2" />
+        <path d="M12 3v3M12 18v3M3 12h3M18 12h3" />
+      </>,
+      size,
+      style,
+    ),
+  target: ({ size, style }: IconProps) =>
+    ic(
+      <>
+        <circle cx="12" cy="12" r="9" />
+        <circle cx="12" cy="12" r="5" />
+        <circle cx="12" cy="12" r="1.5" fill="currentColor" />
+      </>,
+      size,
+      style,
+    ),
+  path: ({ size, style }: IconProps) =>
+    ic(
+      <>
+        <circle cx="5" cy="19" r="2" />
+        <circle cx="19" cy="5" r="2" />
+        <path d="M6.4 17.6 17.6 6.4" strokeDasharray="2 3" />
+      </>,
+      size,
+      style,
+    ),
+  note: ({ size, style }: IconProps) =>
+    ic(
+      <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6M8 13h8M8 17h5" />,
+      size,
+      style,
+    ),
+  filter: ({ size, style }: IconProps) =>
+    ic(<path d="M3 4h18l-7 10v5l-4 2v-7z" />, size, style),
+  save: ({ size, style }: IconProps) =>
+    ic(
+      <>
+        <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+        <path d="M17 21v-8H7v8M7 3v5h8" />
+      </>,
+      size,
+      style,
+    ),
+  export: ({ size, style }: IconProps) =>
+    ic(
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5-5 5 5M12 5v12" />,
+      size,
+      style,
+    ),
+  link: ({ size, style }: IconProps) =>
+    ic(
+      <>
+        <path d="M10 14a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1" />
+        <path d="M14 10a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" />
+      </>,
+      size,
+      style,
+    ),
+};
+
+// ------------------------------------------------------------------ Primitives
+
+function Severity({ s }: { s: string }) {
+  const cls = (s || "").toLowerCase().slice(0, 4);
+  const short =
+    cls.startsWith("crit") ? "crit" :
+    cls.startsWith("high") ? "high" :
+    cls.startsWith("med")  ? "med"  :
+    cls.startsWith("low")  ? "low"  : "info";
+  return <span className={`sev-chip ${short}`}>{short}</span>;
 }
 
-const NODE_KINDS = ["Host", "Endpoint", "Form", "Finding", "Source"];
-const EDGE_KINDS = ["serves", "discovered_by", "links_to", "redirects_to", "contains_form", "submits_to", "found_on"];
-const OPERATORS = ["equals", "contains", "starts_with", "gt", "lt", "is_null", "is_not_null"];
+function Status({ code }: { code: number }) {
+  const cls = `s-${Math.floor(code / 100)}xx`;
+  return <span className={`status-chip ${cls}`}>{code}</span>;
+}
 
-function smartLabel(kind: string, props: Record<string, unknown>, mode: LabelMode, maxLen: number): string {
-  if (mode === "hidden") return "";
-  if (mode === "kind") return kind;
+// ------------------------------------------------------------------ Helpers
 
+function smartLabel(
+  kind: string,
+  props: Record<string, unknown>,
+  maxLen: number,
+): string {
   const url = String(props.url || props.action_url || "");
   const hostname = String(props.hostname || "");
   const name = String(props.name || "");
-
-  if (mode === "full") {
-    const full = url || hostname || name || kind;
-    return `${kind}: ${full}`;
-  }
-
   switch (kind) {
     case "Endpoint": {
       if (!url) return kind;
       try {
         const u = new URL(url);
         const path = u.pathname + (u.search ? u.search.slice(0, 20) : "");
-        return path.length > maxLen ? path.slice(0, maxLen) + "..." : path;
+        return path.length > maxLen ? path.slice(0, maxLen) + "…" : path;
       } catch {
         return url.slice(0, maxLen);
       }
@@ -105,7 +261,7 @@ function smartLabel(kind: string, props: Record<string, unknown>, mode: LabelMod
     case "Host":
       return hostname || kind;
     case "Finding":
-      return name ? (name.length > 25 ? name.slice(0, 25) + "..." : name) : "Finding";
+      return name ? (name.length > 25 ? name.slice(0, 25) + "…" : name) : "Finding";
     case "Form": {
       const method = String(props.method || "GET");
       if (!url) return `${method} form`;
@@ -122,6 +278,41 @@ function smartLabel(kind: string, props: Record<string, unknown>, mode: LabelMod
   }
 }
 
+function nodeDisplayLabel(n: GraphNode, maxLen = 40): string {
+  if (n.label) return n.label;
+  return smartLabel(n.kind, n.properties, maxLen);
+}
+
+function nodeIconSvg(letter: string): string {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><text x="12" y="17" text-anchor="middle" font-size="15" font-weight="700" font-family="sans-serif" fill="rgba(0,0,0,0.75)">${letter}</text></svg>`;
+  return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+}
+
+const NODE_ICON_SVGS: Record<string, string> = Object.fromEntries(
+  Object.entries(KIND_LETTER).map(([k, l]) => [k, nodeIconSvg(l)]),
+);
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function layoutOpts(name: string): any {
+  const cyName = LAYOUT_TO_CY[name] || name;
+  const base = { name: cyName, animate: false };
+  if (cyName === "cose") {
+    return {
+      ...base,
+      nodeRepulsion: () => 8000,
+      idealEdgeLength: () => 80,
+      edgeElasticity: () => 100,
+      gravity: 0.25,
+      numIter: 1000,
+      nodeDimensionsIncludeLabels: true,
+    };
+  }
+  if (cyName === "breadthfirst") {
+    return { ...base, spacingFactor: 1.5 };
+  }
+  return base;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function makeStylesheet(ui: UIPrefs): any[] {
   return [
@@ -130,10 +321,10 @@ function makeStylesheet(ui: UIPrefs): any[] {
       style: {
         label: "data(label)",
         "font-size": ui.font_size,
-        "min-zoomed-font-size": 12,
-        color: "#e6e6e6",
+        "min-zoomed-font-size": 10,
+        color: "#d7dde8",
         "text-outline-width": 2,
-        "text-outline-color": "#111",
+        "text-outline-color": "#0b0e14",
         width: "data(size)",
         height: "data(size)",
         "background-color": "data(bg)",
@@ -141,7 +332,7 @@ function makeStylesheet(ui: UIPrefs): any[] {
         "text-valign": "bottom",
         "text-margin-y": 6,
         "text-wrap": "ellipsis",
-        "text-max-width": "100px",
+        "text-max-width": "120px",
         "background-image": "data(iconSvg)",
         "background-width": "60%",
         "background-height": "60%",
@@ -162,18 +353,15 @@ function makeStylesheet(ui: UIPrefs): any[] {
         "font-size": 8,
         "text-rotation": "autorotate",
         "text-opacity": 0.5,
-        color: "#999",
+        color: "#8795a8",
       },
     },
-    {
-      selector: ".dimmed",
-      style: { opacity: 0.12 },
-    },
+    { selector: ".dimmed", style: { opacity: 0.12 } },
     {
       selector: ".highlighted",
       style: {
         "border-width": 3,
-        "border-color": "#b8d4e8",
+        "border-color": "#c7d8ef",
         "border-opacity": 1,
       },
     },
@@ -181,228 +369,217 @@ function makeStylesheet(ui: UIPrefs): any[] {
       selector: ":selected",
       style: {
         "border-width": 3,
-        "border-color": "#7eb8da",
+        "border-color": "#b8d4e8",
         "border-opacity": 1,
       },
-    },
-    {
-      selector: ".path-node",
-      style: { "border-width": 3, "border-color": "#b8d4e8", "border-opacity": 1, opacity: 1 },
-    },
-    {
-      selector: ".path-edge",
-      style: { width: 4, "line-color": "#b8d4e8", "target-arrow-color": "#b8d4e8", opacity: 1 },
     },
   ];
 }
 
-type Props = {
-  ui: UIPrefs;
-  onUiChange: (partial: Partial<UIPrefs>) => void;
-  onPersistUi: () => void;
-  backendType?: string;
-};
-
-function InspectorRelationships({ nodeId }: { nodeId: string }) {
-  const [data, setData] = useState<{inbound_groups: {rel_type: string; nodes: any[]}[]; outbound_groups: {rel_type: string; nodes: any[]}[]} | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    setLoading(true);
-    apiJson<any>(`/api/nodes/${encodeURIComponent(nodeId)}/neighbors?direction=both`)
-      .then(setData)
-      .catch(() => setData(null))
-      .finally(() => setLoading(false));
-  }, [nodeId]);
-
-  if (loading) return <div className="bh-inspector-section"><p className="muted" style={{padding: "8px 14px"}}>Loading...</p></div>;
-  if (!data) return null;
-
-  return (
-    <>
-      {data.outbound_groups.length > 0 && (
-        <details className="bh-inspector-section">
-          <summary>Outbound ({data.outbound_groups.reduce((a, g) => a + g.nodes.length, 0)})</summary>
-          <div className="bh-inspector-rels">
-            {data.outbound_groups.map(g => (
-              <details key={g.rel_type} className="bh-rel-group">
-                <summary className="bh-rel-header">{g.rel_type} <span className="badge">{g.nodes.length}</span></summary>
-                {g.nodes.map((n: any) => (
-                  <div key={n.id} className="bh-rel-node">
-                    <span className="bh-rel-kind">{n.kind}</span>
-                    <span className="bh-rel-label">{n.properties?.url || n.properties?.hostname || n.properties?.name || n.kind}</span>
-                  </div>
-                ))}
-              </details>
-            ))}
-          </div>
-        </details>
-      )}
-      {data.inbound_groups.length > 0 && (
-        <details className="bh-inspector-section">
-          <summary>Inbound ({data.inbound_groups.reduce((a, g) => a + g.nodes.length, 0)})</summary>
-          <div className="bh-inspector-rels">
-            {data.inbound_groups.map(g => (
-              <details key={g.rel_type} className="bh-rel-group">
-                <summary className="bh-rel-header">{g.rel_type} <span className="badge">{g.nodes.length}</span></summary>
-                {g.nodes.map((n: any) => (
-                  <div key={n.id} className="bh-rel-node">
-                    <span className="bh-rel-kind">{n.kind}</span>
-                    <span className="bh-rel-label">{n.properties?.url || n.properties?.hostname || n.properties?.name || n.kind}</span>
-                  </div>
-                ))}
-              </details>
-            ))}
-          </div>
-        </details>
-      )}
-    </>
-  );
+function findingNodeMatches(f: Finding, node: GraphNode): boolean {
+  const nid = String(node.id);
+  const fEp = f.endpoint_id != null ? String(f.endpoint_id) : "";
+  const fHost = f.host_id != null ? String(f.host_id) : "";
+  const fNode = f.node_id != null ? String(f.node_id) : "";
+  if (fEp && fEp === nid) return true;
+  if (fHost && fHost === nid) return true;
+  if (fNode && fNode === nid) return true;
+  // fallback: match by URL
+  const nUrl = String(node.properties.url || "");
+  const fUrl = String((f as Record<string, unknown>).url || "");
+  if (nUrl && fUrl && nUrl === fUrl) return true;
+  return false;
 }
 
-export default function GraphPanel({ ui, onUiChange, backendType = "sqlite" }: Props) {
+// ------------------------------------------------------------------ Component
+
+export default function GraphPanel({
+  ui,
+  onUiChange,
+  onPersistUi,
+}: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
   const uiRef = useRef(ui);
   uiRef.current = ui;
 
-  const [selected, setSelected] = useState<GraphNode | GraphEdge | null>(null);
+  // ------------- state
   const [status, setStatus] = useState<string>("");
-  const labelMode: LabelMode = "smart";
-  const labelModeRef = useRef(labelMode);
-  labelModeRef.current = labelMode;
-  const [graphStats, setGraphStats] = useState<GraphStats | null>(null);
-  const [enabledKinds, setEnabledKinds] = useState<Set<string>>(new Set(["Host", "Endpoint", "Form"]));
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<SearchHit[]>([]);
-  const [typeColors, setTypeColors] = useState<Record<string, string>>({});
-  const [tooltip, setTooltip] = useState<{x: number; y: number; label: string; kind: string} | null>(null);
-  const [pathStart, setPathStart] = useState<{id: string; label: string} | null>(null);
-  const [pathEnd, setPathEnd] = useState<{id: string; label: string} | null>(null);
-  const [contextMenu, setContextMenu] = useState<{x: number; y: number; nodeId: string; nodeLabel: string} | null>(null);
-  const [sidebarTab, setSidebarTab] = useState<"queries" | "filters" | "path">("queries");
-  const [graphQueries, setGraphQueries] = useState<{name: string; description: string; category: string; count: number}[]>([]);
-  const [querySearch, setQuerySearch] = useState("");
-  const [activeQuery, setActiveQuery] = useState<string | null>(null);
-  const [queryLoading, setQueryLoading] = useState(false);
-  const [graphEmpty, setGraphEmpty] = useState(true);
-  const [showCustomQuery, setShowCustomQuery] = useState(false);
-  const [customTab, setCustomTab] = useState<"visual" | "raw">("visual");
-  const [builderKind, setBuilderKind] = useState("Endpoint");
-  const [builderFilters, setBuilderFilters] = useState<{property: string; operator: string; value: string}[]>([]);
-  const [builderRel, setBuilderRel] = useState<{edge_kind: string; direction: string}[]>([]);
-  const [rawSql, setRawSql] = useState("");
-  const [rawHistory, setRawHistory] = useState<string[]>(() => {
-    try { return JSON.parse(localStorage.getItem("gossamer_raw_history") || "[]"); } catch { return []; }
-  });
-  const [showLegend, setShowLegend] = useState(true);
+  const [nodes, setNodes] = useState<GraphNode[]>([]);
+  const [edges, setEdges] = useState<GraphEdge[]>([]);
+  const [selected, setSelected] = useState<SelectedItem>(null);
+  const [zoomPct, setZoomPct] = useState(100);
+  const [search, setSearch] = useState("");
+  const [leftOpen, setLeftOpen] = useState(true);
+  const [rightOpen, setRightOpen] = useState(true);
+  const [kindFilter, setKindFilter] = useState<Record<string, boolean>>(
+    () => Object.fromEntries(NODE_KINDS.map((k) => [k, true])) as Record<string, boolean>,
+  );
+  const [sourceFilter, setSourceFilter] = useState<Record<string, boolean>>({});
+  const [inspTab, setInspTab] = useState<"overview" | "properties" | "neighbors" | "findings">(
+    "overview",
+  );
+  const [findings, setFindings] = useState<Finding[]>([]);
+  const [findingsLoading, setFindingsLoading] = useState(false);
 
-  const applyStyles = useCallback(() => {
-    const cy = cyRef.current;
-    if (!cy) return;
-    try {
-      cy.style().fromJson(makeStylesheet(uiRef.current) as unknown as cytoscape.StylesheetJson).update();
-    } catch {
-      /* ignore style refresh errors */
+  // ------------- derived
+  const layoutChip: LayoutChip = useMemo(() => {
+    const k = ui.graph_layout;
+    if (k === "cose" || k === "circle" || k === "grid") return k as LayoutChip;
+    if (k === "breadthfirst") return "breadth";
+    return "cose";
+  }, [ui.graph_layout]);
+
+  const nodeById = useMemo(() => {
+    const m: Record<string, GraphNode> = {};
+    for (const n of nodes) m[n.id] = n;
+    return m;
+  }, [nodes]);
+
+  const visibleNodes = useMemo(
+    () => nodes.filter((n) => kindFilter[n.kind] !== false),
+    [nodes, kindFilter],
+  );
+  const visibleEdges = useMemo(() => {
+    const set = new Set(visibleNodes.map((n) => n.id));
+    return edges.filter((e) => set.has(e.source) && set.has(e.target));
+  }, [edges, visibleNodes]);
+
+  const counts = useMemo(() => {
+    const c: Record<string, number> = {};
+    for (const n of nodes) c[n.kind] = (c[n.kind] || 0) + 1;
+    return c;
+  }, [nodes]);
+
+  const sources = useMemo(() => {
+    const s = new Set<string>();
+    for (const n of nodes) {
+      if (n.kind === "Source") {
+        const name = String(n.properties?.name || "").trim();
+        if (name) s.add(name);
+      }
     }
-  }, []);
+    return Array.from(s).sort();
+  }, [nodes]);
 
+  // Ensure new sources default to "on" in the filter
   useEffect(() => {
-    apiJson<GraphStats>("/api/graph/stats").then(setGraphStats).catch(() => {});
-    apiJson<{nodes: Record<string, {color?: string}>}>("/api/graph-type-registry")
-      .then(reg => {
-        const colors: Record<string, string> = {};
-        for (const [kind, hints] of Object.entries(reg.nodes)) {
-          colors[kind] = hints.color || DEFAULT_NODE_COLOR;
-        }
-        setTypeColors(colors);
-      }).catch(() => {});
-    apiJson<{name: string; description: string; category: string}[]>("/api/graph/queries")
-      .then(setGraphQueries).catch(() => {});
-  }, []);
-
-  const labelSkipRef = useRef(false);
-
-  const mapGraphData = useCallback((data: { nodes: GraphNode[]; edges: GraphEdge[] }, cur: UIPrefs) => {
-    const cyNodes = data.nodes.map((n) => ({
-      data: {
-        id: n.id,
-        label: smartLabel(n.kind, n.properties, labelModeRef.current, cur.label_max_len),
-        bg: n.color || DEFAULT_NODE_COLOR,
-        kind: n.kind,
-        props: n.properties,
-        size: n.kind === "Host" ? cur.node_size * 1.4 : n.kind === "Source" ? cur.node_size * 0.7 : cur.node_size,
-        iconSvg: NODE_ICON_SVGS[n.kind] || NODE_ICON_SVGS.Source,
-      },
-    }));
-    const cyEdges = data.edges.map((e) => {
-      const reversed = REVERSE_EDGE_DISPLAY.has(e.kind);
-      return {
-        data: {
-          id: e.id,
-          source: reversed ? e.target : e.source,
-          target: reversed ? e.source : e.target,
-          ec: e.color || "#666",
-          kind: e.kind,
-        },
-      };
+    if (sources.length === 0) return;
+    setSourceFilter((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const s of sources) if (!(s in next)) { next[s] = true; changed = true; }
+      return changed ? next : prev;
     });
-    return { cyNodes, cyEdges };
+  }, [sources]);
+
+  // neighbors of selected node
+  const neighbors = useMemo(() => {
+    if (!selected || selected.kind !== "node") return [];
+    const id = selected.node.id;
+    const out: { edge: GraphEdge; node: GraphNode; dir: "in" | "out" }[] = [];
+    for (const e of edges) {
+      if (e.source === id && nodeById[e.target]) {
+        out.push({ edge: e, node: nodeById[e.target], dir: "out" });
+      } else if (e.target === id && nodeById[e.source]) {
+        out.push({ edge: e, node: nodeById[e.source], dir: "in" });
+      }
+    }
+    return out;
+  }, [selected, edges, nodeById]);
+
+  const nodeFindings = useMemo(() => {
+    if (!selected || selected.kind !== "node") return [];
+    return findings.filter((f) => findingNodeMatches(f, selected.node));
+  }, [selected, findings]);
+
+  // ------------- cytoscape sync
+
+  // Container ResizeObserver — cytoscape needs an explicit resize() when the
+  // parent element's size changes (e.g., sidebar collapse), otherwise rendered
+  // positions / hit testing drift. First mount can also run before the grid
+  // column settles, so the first fit() happens here once we actually have width.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    let hasFit = false;
+    const ro = new ResizeObserver(() => {
+      const cy = cyRef.current;
+      if (!cy) return;
+      cy.resize();
+      if (!hasFit && cy.elements().length > 0 && el.clientWidth > 0) {
+        cy.fit(undefined, 24);
+        hasFit = true;
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
   }, []);
 
-  const loadGraph = useCallback(async () => {
-    const cy = cyRef.current;
-    if (!cy) return;
-    const cur = uiRef.current;
-
-    const params = new URLSearchParams();
-    if (enabledKinds.size > 0) {
-      params.set("kinds", Array.from(enabledKinds).join(","));
-    }
-
-    const r = await apiFetch(`/api/graph?${params}`);
-    if (!r.ok) {
-      setStatus("Failed to load graph");
-      return;
-    }
-    const data = (await r.json()) as { nodes: GraphNode[]; edges: GraphEdge[] };
-    const { cyNodes, cyEdges } = mapGraphData(data, cur);
-    cy.elements().remove();
-    cy.add([...cyNodes, ...cyEdges]);
-    cy.layout(layoutOpts(cur.graph_layout) as cytoscape.LayoutOptions).run();
-    cy.fit(undefined, 24);
-    setStatus(`${data.nodes.length} nodes, ${data.edges.length} edges`);
-    setGraphEmpty(data.nodes.length === 0);
-  }, [enabledKinds]);
-
-  const runQuery = useCallback(async (queryName: string) => {
-    const cy = cyRef.current;
-    if (!cy) return;
-    setQueryLoading(true);
-    setActiveQuery(queryName);
-    try {
-      const data = await apiJson<{nodes: GraphNode[]; edges: GraphEdge[]}>(`/api/graph/queries/${queryName}/run`, {
-        method: "POST",
+  const applyCyData = useCallback(
+    (cy: Core, ns: GraphNode[], es: GraphEdge[], cur: UIPrefs, doLayout: boolean) => {
+      const cyNodes = ns.map((n) => ({
+        data: {
+          id: n.id,
+          label: nodeDisplayLabel(n, cur.label_max_len),
+          bg: n.color || DEFAULT_NODE_COLOR,
+          kind: n.kind,
+          props: n.properties,
+          size:
+            n.kind === "Host"
+              ? cur.node_size * 1.4
+              : n.kind === "Source"
+                ? cur.node_size * 0.7
+                : cur.node_size,
+          iconSvg: NODE_ICON_SVGS[n.kind] || NODE_ICON_SVGS.Source,
+        },
+      }));
+      const cyEdges = es.map((e) => {
+        const rev = REVERSE_EDGE_DISPLAY.has(e.kind);
+        return {
+          data: {
+            id: e.id,
+            source: rev ? e.target : e.source,
+            target: rev ? e.source : e.target,
+            ec: e.color || "#6c7a90",
+            kind: e.kind,
+          },
+        };
       });
-      const cur = uiRef.current;
-      const { cyNodes, cyEdges } = mapGraphData(data, cur);
       cy.elements().remove();
       cy.add([...cyNodes, ...cyEdges]);
-      cy.layout(layoutOpts(cur.graph_layout) as cytoscape.LayoutOptions).run();
-      cy.fit(undefined, 24);
-      setStatus(`${data.nodes.length} nodes, ${data.edges.length} edges — ${queryName}`);
-      setGraphEmpty(data.nodes.length === 0);
-    } catch (e) {
-      setStatus(`Query failed: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setQueryLoading(false);
-    }
-  }, []);
+      if (doLayout) {
+        cy.resize();
+        cy.layout(layoutOpts(cur.graph_layout) as cytoscape.LayoutOptions).run();
+        cy.fit(undefined, 24);
+      }
+    },
+    [],
+  );
 
+  const loadGraph = useCallback(async () => {
+    const cur = uiRef.current;
+    try {
+      const r = await apiFetch(`/api/graph`);
+      if (!r.ok) {
+        setStatus("Failed to load graph");
+        return;
+      }
+      const data = (await r.json()) as { nodes: GraphNode[]; edges: GraphEdge[] };
+      setNodes(data.nodes);
+      setEdges(data.edges);
+      setStatus(`${data.nodes.length} nodes, ${data.edges.length} edges`);
+      const cy = cyRef.current;
+      if (cy) applyCyData(cy, data.nodes, data.edges, cur, true);
+    } catch (e) {
+      setStatus(`Failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }, [applyCyData]);
+
+  // ------------- init cytoscape
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-
     let cy: Core;
     try {
       cy = cytoscape({
@@ -422,73 +599,63 @@ export default function GraphPanel({ ui, onUiChange, backendType = "sqlite" }: P
     cyRef.current = cy;
 
     cy.on("tap", "node", (evt) => {
-      const n = evt.target.data() as GraphNode & { bg?: string; props?: Record<string, unknown> };
+      const d = evt.target.data();
       setSelected({
-        id: String(n.id),
-        kind: String(n.kind),
-        label: String(n.label),
-        properties: n.props || {},
+        kind: "node",
+        node: {
+          id: String(d.id),
+          kind: String(d.kind),
+          label: String(d.label),
+          color: String(d.bg || DEFAULT_NODE_COLOR),
+          properties: (d.props || {}) as Record<string, unknown>,
+        },
       });
     });
     cy.on("tap", "edge", (evt) => {
-      const ed = evt.target.data();
+      const d = evt.target.data();
       setSelected({
-        id: String(ed.id),
-        kind: String(ed.kind),
-        label: String(ed.kind),
-        source: String(ed.source),
-        target: String(ed.target),
-        properties: {},
-        sources: [],
-      } as GraphEdge);
-    });
-
-    cy.on("mouseover", "node", (evt) => {
-      const node = evt.target;
-      const pos = node.renderedPosition();
-      const data = node.data();
-      setTooltip({
-        x: pos.x,
-        y: pos.y - 20,
-        label: String(data.props?.url || data.props?.hostname || data.props?.name || data.label || ""),
-        kind: data.kind,
+        kind: "edge",
+        edge: {
+          id: String(d.id),
+          kind: String(d.kind),
+          source: String(d.source),
+          target: String(d.target),
+          color: String(d.ec),
+        },
       });
     });
-    cy.on("mouseout", "node", () => setTooltip(null));
-    cy.on("cxttap", "node", (evt) => {
-      const node = evt.target;
-      const data = node.data();
-      const rp = node.renderedPosition();
-      const container = containerRef.current;
-      if (!container) return;
-      const rect = container.getBoundingClientRect();
-      setContextMenu({ x: rp.x + rect.left, y: rp.y + rect.top, nodeId: data.id, nodeLabel: String(data.label || data.kind) });
-    });
-    cy.on("tap", () => setContextMenu(null));
     cy.on("tap", (evt) => {
-      if (evt.target === cy) {
-        setSelected(null);
-      }
+      if (evt.target === cy) setSelected(null);
     });
+    cy.on("zoom", () => setZoomPct(Math.round(cy.zoom() * 100)));
 
     return () => {
       cy.destroy();
       cyRef.current = null;
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // load initial graph once
   useEffect(() => {
-    // Start empty — user runs queries to populate
-    setGraphEmpty(true);
-  }, []);
+    void loadGraph();
+    // fetch findings too (used in inspector tab + finding kind)
+    apiJson<{ findings: Finding[] }>("/api/findings?limit=2000")
+      .then((r) => setFindings(r.findings || []))
+      .catch(() => setFindings([]));
+  }, [loadGraph]);
 
+  // restyle on ui prefs change
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy) return;
-    applyStyles();
-  }, [ui, applyStyles]);
+    try {
+      cy.style().fromJson(makeStylesheet(uiRef.current) as unknown as cytoscape.StylesheetJson).update();
+    } catch {
+      /* ignore */
+    }
+  }, [ui.node_size, ui.font_size, ui.edge_opacity, ui.edge_width]);
 
+  // re-layout on layout change
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy || cy.elements().length === 0) return;
@@ -496,490 +663,637 @@ export default function GraphPanel({ ui, onUiChange, backendType = "sqlite" }: P
     cy.fit(undefined, 24);
   }, [ui.graph_layout]);
 
+  // kind-filter sync — hide/show elements
   useEffect(() => {
-    if (!labelSkipRef.current) {
-      labelSkipRef.current = true;
-      return;
-    }
-    void loadGraph();
-  }, [ui.label_max_len, labelMode, loadGraph]);
-
-  useEffect(() => {
-    if (!searchQuery.trim()) {
-      setSearchResults([]);
-      cyRef.current?.elements().removeClass("dimmed highlighted");
-      return;
-    }
     const cy = cyRef.current;
     if (!cy) return;
-    const q = searchQuery.toLowerCase();
-    const matches: SearchHit[] = [];
-    cy.nodes().forEach(node => {
-      const data = node.data();
-      const label = String(data.label || "").toLowerCase();
-      const kind = String(data.kind || "").toLowerCase();
-      const id = String(data.id || "").toLowerCase();
-      if (label.includes(q) || kind.includes(q) || id.includes(q)) {
-        matches.push({id: data.id, kind: data.kind, label: data.label, color: data.bg || DEFAULT_NODE_COLOR});
-        node.addClass("highlighted");
-        node.removeClass("dimmed");
-      } else {
-        node.addClass("dimmed");
-        node.removeClass("highlighted");
-      }
+    cy.batch(() => {
+      cy.nodes().forEach((node) => {
+        const k = String(node.data("kind"));
+        const vis = kindFilter[k] !== false;
+        node.style("display", vis ? "element" : "none");
+      });
+      cy.edges().forEach((edge) => {
+        const s = cy.getElementById(String(edge.data("source")));
+        const t = cy.getElementById(String(edge.data("target")));
+        const sVis = s.length ? s.style("display") !== "none" : false;
+        const tVis = t.length ? t.style("display") !== "none" : false;
+        edge.style("display", sVis && tVis ? "element" : "none");
+      });
     });
-    setSearchResults(matches.slice(0, 50));
-  }, [searchQuery]);
+  }, [kindFilter, nodes, edges]);
 
+  // search highlighting
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") setContextMenu(null); };
-    const clickHandler = () => setContextMenu(null);
-    document.addEventListener("keydown", handler);
-    document.addEventListener("click", clickHandler);
-    return () => { document.removeEventListener("keydown", handler); document.removeEventListener("click", clickHandler); };
+    const cy = cyRef.current;
+    if (!cy) return;
+    if (!search.trim()) {
+      cy.elements().removeClass("dimmed highlighted");
+      return;
+    }
+    const q = search.toLowerCase();
+    cy.batch(() => {
+      cy.nodes().forEach((node) => {
+        const d = node.data();
+        const label = String(d.label || "").toLowerCase();
+        const kind = String(d.kind || "").toLowerCase();
+        const id = String(d.id || "").toLowerCase();
+        if (label.includes(q) || kind.includes(q) || id.includes(q)) {
+          node.addClass("highlighted");
+          node.removeClass("dimmed");
+        } else {
+          node.addClass("dimmed");
+          node.removeClass("highlighted");
+        }
+      });
+    });
+  }, [search]);
+
+  // when selection changes and findings tab is active, refresh findings lazily
+  useEffect(() => {
+    if (inspTab !== "findings") return;
+    if (!selected || selected.kind !== "node") return;
+    if (findings.length > 0) return;
+    setFindingsLoading(true);
+    apiJson<{ findings: Finding[] }>("/api/findings?limit=2000")
+      .then((r) => setFindings(r.findings || []))
+      .catch(() => setFindings([]))
+      .finally(() => setFindingsLoading(false));
+  }, [inspTab, selected, findings.length]);
+
+  // ------------- toolbar actions
+
+  const zoomIn = useCallback(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    cy.zoom({ level: Math.min(4, cy.zoom() * 1.2), renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 } });
+  }, []);
+  const zoomOut = useCallback(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    cy.zoom({ level: Math.max(0.1, cy.zoom() / 1.2), renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 } });
+  }, []);
+  const fit = useCallback(() => {
+    cyRef.current?.fit(undefined, 24);
+  }, []);
+  const center = useCallback(() => {
+    cyRef.current?.center();
   }, []);
 
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      const cy = cyRef.current;
-      if (!cy) return;
-      if (e.key === "Delete" || e.key === "Backspace") {
-        const selected = cy.$(":selected");
-        if (selected.length) {
-          selected.style("display", "none");
-          setStatus(`Hidden ${selected.length} elements`);
-        }
-      }
-      if (e.key === "Escape") {
-        cy.elements().unselect();
-        cy.elements().removeClass("dimmed path-node path-edge");
-        setSelected(null);
-        setContextMenu(null);
-      }
-      if (e.key === "a" && (e.ctrlKey || e.metaKey)) {
-        e.preventDefault();
-        cy.elements().select();
-      }
-    };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
+  const exportJson = useCallback(() => {
+    const payload = { nodes, edges };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "graph.json";
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [nodes, edges]);
+
+  const setLayoutChip = useCallback(
+    (chip: LayoutChip) => {
+      const real = LAYOUT_TO_CY[chip];
+      onUiChange({ graph_layout: real });
+      onPersistUi();
+    },
+    [onUiChange, onPersistUi],
+  );
+
+  const toggleKind = useCallback((k: string) => {
+    setKindFilter((prev) => ({ ...prev, [k]: !prev[k] }));
+  }, []);
+  const toggleSource = useCallback((s: string) => {
+    setSourceFilter((prev) => ({ ...prev, [s]: !prev[s] }));
   }, []);
 
-  async function showDirection(nodeId: string, direction: "in" | "out") {
-    const cy = cyRef.current;
-    if (!cy) return;
-    try {
-      const data = await apiJson<any>(`/api/nodes/${encodeURIComponent(nodeId)}/neighbors?direction=${direction}`);
-      const groups = direction === "out" ? (data.outbound_groups || []) : (data.inbound_groups || []);
-      // Clear graph and show only this node + its directional neighbors
-      const cur = uiRef.current;
-      const centerNode = cy.getElementById(nodeId);
-      const centerData = centerNode.length ? centerNode.data() : null;
-      const newNodes: any[] = [];
-      const newEdges: any[] = [];
-      if (centerData) {
-        newNodes.push({ data: { ...centerData } });
-      }
-      for (const g of groups) {
-        for (const n of g.nodes) {
-          const icon = NODE_ICON_SVGS[n.kind] || NODE_ICON_SVGS.Source;
-          newNodes.push({ data: { id: n.id, label: n.properties?.url || n.properties?.hostname || n.properties?.name || n.kind, bg: typeColors[n.kind] || DEFAULT_NODE_COLOR, kind: n.kind, props: n.properties, size: n.kind === "Host" ? cur.node_size * 1.4 : cur.node_size, iconSvg: icon } });
-          const edgeId = `${direction === "out" ? nodeId : n.id}_${direction === "out" ? n.id : nodeId}_${g.rel_type}`;
-          newEdges.push({ data: { id: edgeId, source: direction === "out" ? nodeId : n.id, target: direction === "out" ? n.id : nodeId, ec: "#666", kind: g.rel_type } });
-        }
-      }
-      cy.elements().remove();
-      cy.add([...newNodes, ...newEdges]);
-      cy.layout(layoutOpts(cur.graph_layout) as cytoscape.LayoutOptions).run();
-      cy.fit(undefined, 40);
-      const total = groups.reduce((a: number, g: any) => a + g.nodes.length, 0);
-      setStatus(`${direction === "out" ? "Outbound" : "Inbound"}: ${total} nodes`);
-      setGraphEmpty(false);
-    } catch (e) {
-      setStatus(`Failed: ${e instanceof Error ? e.message : String(e)}`);
-    }
-    setContextMenu(null);
-  }
+  // ------------- render helpers
 
-  async function showNeighbors(nodeId: string) {
-    const cy = cyRef.current;
-    if (!cy) return;
-    try {
-      const data = await apiJson<{inbound: Record<string, any[]>; outbound: Record<string, any[]>}>(`/api/nodes/${encodeURIComponent(nodeId)}/neighbors?direction=both`);
-      let added = 0;
-      const allNodes: any[] = [];
-      const allEdges: any[] = [];
-      for (const [, neighbors] of [...Object.entries(data.inbound || {}), ...Object.entries(data.outbound || {})]) {
-        for (const n of neighbors) {
-          if (!cy.getElementById(n.id).length) {
-            allNodes.push({ data: { id: n.id, label: n.label || n.kind, bg: n.color || DEFAULT_NODE_COLOR, kind: n.kind, props: n.properties, size: 18 } });
-            added++;
-          }
-          if (n.edge_id && !cy.getElementById(n.edge_id).length) {
-            allEdges.push({ data: { id: n.edge_id, source: n.edge_source || nodeId, target: n.edge_target || n.id, ec: n.edge_color || "#666", kind: n.edge_kind || "" } });
-          }
-        }
-      }
-      if (allNodes.length || allEdges.length) {
-        cy.add([...allNodes, ...allEdges]);
-        let newEles = cy.collection();
-        allNodes.forEach(n => { newEles = newEles.union(cy.getElementById(n.data.id)); });
-        if (newEles.length) newEles.layout({ name: "cose", animate: true, animationDuration: 300, fit: false } as any).run();
-      }
-      setStatus(`Added ${added} neighbors`);
-    } catch (e) {
-      setStatus(`Failed: ${e instanceof Error ? e.message : String(e)}`);
-    }
-    setContextMenu(null);
-  }
+  const selectedNode = selected && selected.kind === "node" ? selected.node : null;
 
-  async function findPath() {
-    if (!pathStart || !pathEnd) return;
-    const cy = cyRef.current;
-    if (!cy) return;
-    try {
-      const data = await apiJson<{nodes: any[]; edges: any[]}>("/api/graph/path", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ from_id: pathStart.id, to_id: pathEnd.id }),
-      });
-      if (!data.nodes.length) { setStatus("No path found"); return; }
-      cy.elements().addClass("dimmed");
-      const pathNodeIds = new Set(data.nodes.map((n: any) => n.id));
-      const pathEdgeIds = new Set(data.edges.map((e: any) => e.id));
-      cy.nodes().forEach(node => { if (pathNodeIds.has(node.id())) node.removeClass("dimmed").addClass("path-node"); });
-      cy.edges().forEach(edge => { if (pathEdgeIds.has(edge.id())) edge.removeClass("dimmed").addClass("path-edge"); });
-      const pathEles = cy.elements(".path-node, .path-edge");
-      if (pathEles.length) cy.animate({ fit: { eles: pathEles, padding: 40 } }, { duration: 300 });
-      setStatus(`Path: ${data.nodes.length} nodes, ${data.edges.length} edges`);
-    } catch (e) {
-      setStatus(`Path failed: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  }
-
-  function clearPath() {
-    cyRef.current?.elements().removeClass("dimmed path-node path-edge");
-    setPathStart(null);
-    setPathEnd(null);
-  }
-
-  async function runVisualQuery() {
-    const cy = cyRef.current;
-    if (!cy) return;
-    setQueryLoading(true);
-    try {
-      const body = { node_kind: builderKind, filters: builderFilters, relationships: builderRel };
-      const data = await apiJson<{nodes: GraphNode[]; edges: GraphEdge[]}>("/api/graph/query/build", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-      });
-      const cur = uiRef.current;
-      const { cyNodes, cyEdges } = mapGraphData(data, cur);
-      cy.elements().remove();
-      cy.add([...cyNodes, ...cyEdges]);
-      cy.layout(layoutOpts(cur.graph_layout) as cytoscape.LayoutOptions).run();
-      cy.fit(undefined, 24);
-      setStatus(`${data.nodes.length} nodes, ${data.edges.length} edges — custom query`);
-      setGraphEmpty(data.nodes.length === 0);
-      setShowCustomQuery(false);
-    } catch (e) { setStatus(`Query failed: ${e instanceof Error ? e.message : String(e)}`); } finally { setQueryLoading(false); }
-  }
-
-  async function runRawQuery() {
-    const cy = cyRef.current;
-    if (!cy || !rawSql.trim()) return;
-    setQueryLoading(true);
-    try {
-      const data = await apiJson<{nodes: GraphNode[]; edges: GraphEdge[]}>("/api/graph/query/raw", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sql: rawSql }),
-      });
-      const cur = uiRef.current;
-      const { cyNodes, cyEdges } = mapGraphData(data, cur);
-      cy.elements().remove();
-      cy.add([...cyNodes, ...cyEdges]);
-      cy.layout(layoutOpts(cur.graph_layout) as cytoscape.LayoutOptions).run();
-      cy.fit(undefined, 24);
-      setStatus(`${data.nodes.length} nodes, ${data.edges.length} edges — raw SQL`);
-      setGraphEmpty(data.nodes.length === 0);
-      const history = [rawSql, ...rawHistory.filter(h => h !== rawSql)].slice(0, 10);
-      setRawHistory(history);
-      localStorage.setItem("gossamer_raw_history", JSON.stringify(history));
-      setShowCustomQuery(false);
-    } catch (e) { setStatus(`Query failed: ${e instanceof Error ? e.message : String(e)}`); } finally { setQueryLoading(false); }
-  }
-
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  // ------------- UI
 
   return (
-    <div className="graph-panel">
-      {/* Full-screen graph canvas */}
-      <div ref={containerRef} className="cy" />
-
-      {graphEmpty && (
-        <div className="graph-empty-state"><p>Run a query to explore the graph</p></div>
+    <div
+      className={`graph-screen ${!leftOpen ? "left-collapsed" : ""} ${!rightOpen ? "right-collapsed" : ""}`}
+    >
+      {!leftOpen && (
+        <button
+          type="button"
+          className="panel-handle left"
+          onClick={() => setLeftOpen(true)}
+          title="Show filters"
+        >
+          <Icon.chevronR size={14} />
+        </button>
       )}
 
-      {/* Floating top-left: collapsible query drawer (BloodHound-style) */}
-      <div className={`bh-drawer ${drawerOpen ? "bh-drawer-open" : ""}`}>
-        <div className="bh-drawer-tabs">
-          <button type="button" className={sidebarTab === "queries" ? "bh-tab active" : "bh-tab"} onClick={() => { setSidebarTab("queries"); setDrawerOpen(true); }} title="Queries">🔍</button>
-          <button type="button" className={sidebarTab === "path" ? "bh-tab active" : "bh-tab"} onClick={() => { setSidebarTab("path"); setDrawerOpen(true); }} title="Pathfinding">◇</button>
-          <button type="button" className={sidebarTab === "filters" ? "bh-tab active" : "bh-tab"} onClick={() => { setSidebarTab("filters"); setDrawerOpen(true); }} title="Filters">⚙</button>
-          <button type="button" className="bh-tab" onClick={() => setShowCustomQuery(true)} title="Custom query">{"</>"}</button>
-          <button type="button" className="bh-tab bh-tab-toggle" onClick={() => setDrawerOpen(!drawerOpen)} title={drawerOpen ? "Collapse" : "Expand"}>{drawerOpen ? "▲" : "▼"}</button>
+      {leftOpen && (
+        <aside className="graph-sidebar">
+          <div className="gs-section">
+            <div className="searchbar">
+              <Icon.search size={13} />
+              <input
+                placeholder="Search nodes…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+              <kbd>/</kbd>
+            </div>
+          </div>
+
+          <div className="gs-section">
+            <div className="gs-title">
+              <span>Node kinds</span>
+              <span className="mono" style={{ color: "var(--fg-3)" }}>
+                {visibleNodes.length}/{nodes.length}
+              </span>
+            </div>
+            {NODE_KINDS.map((k) => (
+              <div
+                key={k}
+                className={`kind-row ${!kindFilter[k] ? "off" : ""}`}
+                onClick={() => toggleKind(k)}
+              >
+                <span
+                  className="kind-swatch"
+                  style={{ background: KIND_COLOR_VAR[k], color: KIND_COLOR_VAR[k] }}
+                />
+                <span className="kind-name">{k}</span>
+                <span className="kind-count">{counts[k] || 0}</span>
+              </div>
+            ))}
+          </div>
+
+          <div className="gs-section">
+            <div className="gs-title">Discovered by</div>
+            <div className="chip-row">
+              {sources.length === 0 && (
+                <span className="mono" style={{ color: "var(--fg-3)", fontSize: "var(--fs-xs)" }}>
+                  —
+                </span>
+              )}
+              {sources.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  className={`chip ${sourceFilter[s] ? "on" : ""}`}
+                  onClick={() => toggleSource(s)}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="gs-section">
+            <div className="gs-title">
+              <span>Saved views</span>
+              <button type="button" className="chip" style={{ padding: "2px 6px" }} title="Add view">
+                <Icon.plus size={11} />
+              </button>
+            </div>
+            <div className="saved-views">
+              {[
+                { n: "Exposed credentials", c: 0 },
+                { n: "Unauthenticated admin", c: 0 },
+                { n: "High-severity attack paths", c: 0 },
+                { n: "Staging surface", c: 0 },
+              ].map((v) => (
+                <div key={v.n} className="saved-view">
+                  <span>{v.n}</span>
+                  <span className="sv-count">{v.c}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="gs-section" style={{ marginTop: "auto", borderBottom: 0 }}>
+            <div className="gs-title">Layout</div>
+            <div className="chip-row">
+              {LAYOUTS.map((l) => (
+                <button
+                  type="button"
+                  key={l}
+                  className={`chip ${layoutChip === l ? "on" : ""}`}
+                  onClick={() => setLayoutChip(l)}
+                >
+                  {l}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <button
+            type="button"
+            className="panel-collapse left"
+            onClick={() => setLeftOpen(false)}
+            title="Collapse"
+          >
+            <Icon.chevronR size={14} style={{ transform: "rotate(180deg)" }} />
+          </button>
+        </aside>
+      )}
+
+      {/* CANVAS */}
+      <div className="graph-canvas-wrap">
+        <div className="canvas-grid" />
+        <div ref={containerRef} className="cy-viewport" />
+
+        {visibleNodes.length === 0 && (
+          <div className="graph-empty-overlay">
+            <span>{status || "No graph data yet — run a scan or ingest to populate."}</span>
+          </div>
+        )}
+
+        <div className="graph-toolbar">
+          <div className="gt-group">
+            <button type="button" className="gt-btn on">
+              <Icon.target size={12} /> Pointer
+            </button>
+            <button type="button" className="gt-btn" title="Pathfinding (not wired)">
+              <Icon.path size={12} /> Path
+            </button>
+            <button type="button" className="gt-btn" title="Add note (not wired)">
+              <Icon.note size={12} /> Note
+            </button>
+          </div>
+          <div className="gt-group">
+            <button
+              type="button"
+              className="gt-btn"
+              onClick={() => setLeftOpen((o) => !o)}
+              title="Toggle filters"
+            >
+              <Icon.filter size={12} /> Filters
+            </button>
+            <button
+              type="button"
+              className="gt-btn"
+              onClick={onPersistUi}
+              title="Persist UI prefs"
+            >
+              <Icon.save size={12} /> Save view
+            </button>
+            <button type="button" className="gt-btn" onClick={exportJson} title="Export JSON">
+              <Icon.export size={12} /> Export
+            </button>
+          </div>
         </div>
 
-        {drawerOpen && sidebarTab === "queries" && (
-          <div className="bh-drawer-body">
-            <div className="sidebar-search">
-              <input type="text" placeholder="Search queries..." value={querySearch}
-                onChange={(e) => setQuerySearch(e.target.value)} className="sidebar-search-input" />
-              {querySearch && <button type="button" className="sidebar-search-clear" onClick={() => setQuerySearch("")}>&times;</button>}
-            </div>
-            {(() => {
-              const filtered = graphQueries.filter(q =>
-                !querySearch || q.name.toLowerCase().includes(querySearch.toLowerCase()) || q.description.toLowerCase().includes(querySearch.toLowerCase())
-              );
-              const grouped = filtered.reduce<Record<string, typeof filtered>>((acc, q) => {
-                (acc[q.category] = acc[q.category] || []).push(q);
-                return acc;
-              }, {});
-              return Object.entries(grouped).sort(([a],[b]) => a.localeCompare(b)).map(([cat, queries]) => (
-                <details key={cat} className="bh-group" open>
-                  <summary className="bh-group-header">{cat} <span className="badge">{queries.length}</span></summary>
-                  {queries.map(q => (
-                    <button key={q.name} type="button"
-                      className={`bh-query ${activeQuery === q.name ? "active" : ""}`}
-                      onClick={() => { void runQuery(q.name); setDrawerOpen(false); }}
-                      disabled={queryLoading}>
-                      <span className="bh-query-row">
-                        <span className="bh-query-name">{q.name.replace(/_/g, " ")}</span>
-                        <span className="badge bh-query-count">{q.count}</span>
-                      </span>
-                      <span className="bh-query-desc">{q.description}</span>
-                    </button>
-                  ))}
-                </details>
-              ));
-            })()}
+        <div className="graph-badges">
+          <div className="graph-badge">
+            <strong>{visibleNodes.length}</strong> nodes
           </div>
-        )}
-
-        {drawerOpen && sidebarTab === "path" && (
-          <div className="bh-drawer-body">
-            {backendType === "sqlite" ? (
-              <p className="sidebar-hint">Path queries require Neo4j backend</p>
-            ) : (
-              <div className="bh-path">
-                <div className="bh-path-row"><span className="bh-path-dot start" /><span>{pathStart?.label || "Right-click a node → Set as start"}</span></div>
-                <div className="bh-path-row"><span className="bh-path-dot end" /><span>{pathEnd?.label || "Right-click a node → Set as end"}</span></div>
-                <div className="bh-path-actions">
-                  <button type="button" className="primary" onClick={() => void findPath()} disabled={!pathStart || !pathEnd}>Find Path</button>
-                  <button type="button" className="ghost" onClick={clearPath}>Clear</button>
-                </div>
-              </div>
-            )}
+          <div className="graph-badge">
+            <strong>{visibleEdges.length}</strong> edges
           </div>
-        )}
+          <div className="graph-badge mono">{zoomPct}%</div>
+        </div>
 
-        {drawerOpen && sidebarTab === "filters" && (
-          <div className="bh-drawer-body">
-            <div className="sidebar-search">
-              <input type="text" placeholder="Search nodes..." value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)} className="sidebar-search-input" />
-              {searchQuery && <button type="button" className="sidebar-search-clear" onClick={() => setSearchQuery("")}>&times;</button>}
-            </div>
-            {searchResults.length > 0 && (
-              <div className="sidebar-results">
-                {searchResults.slice(0, 20).map((r) => (
-                  <button key={r.id} type="button" className="sidebar-result"
-                    onClick={() => { const cy = cyRef.current; if (!cy) return; const node = cy.getElementById(r.id); if (node.length) { cy.animate({ center: { eles: node }, zoom: 2 }, { duration: 300 }); node.select(); } }}>
-                    <span className="color-swatch" style={{ backgroundColor: r.color }} />
-                    <span className="sidebar-result-kind">{r.kind}</span>
-                    <span className="sidebar-result-label">{r.label}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-            <details className="bh-group">
-              <summary className="bh-group-header">Node Types</summary>
-              {graphStats && Object.entries(graphStats.node_counts).map(([kind, count]) => (
-                <label key={kind} className="sidebar-filter">
-                  <input type="checkbox" checked={enabledKinds.has(kind)}
-                    onChange={() => { setEnabledKinds(prev => { const next = new Set(prev); if (next.has(kind)) next.delete(kind); else next.add(kind); return next; }); }} />
-                  <span className="color-swatch" style={{ backgroundColor: typeColors[kind] || DEFAULT_NODE_COLOR }} />
-                  <span className="sidebar-filter-name">{kind}</span>
-                  <span className="badge">{count}</span>
-                </label>
-              ))}
-            </details>
-            <div className="bh-actions">
-              <button type="button" className="ghost" onClick={() => void loadGraph()}>Reload graph</button>
-              <button type="button" className="ghost" onClick={() => cyRef.current?.fit(undefined, 24)}>Fit</button>
-            </div>
-          </div>
-        )}
-      </div>
+        <div className="zoom-controls">
+          <button type="button" onClick={zoomIn} title="Zoom in">
+            <Icon.zoomIn size={14} />
+          </button>
+          <button type="button" onClick={zoomOut} title="Zoom out">
+            <Icon.zoomOut size={14} />
+          </button>
+          <button type="button" onClick={fit} title="Fit">
+            <Icon.fit size={14} />
+          </button>
+          <button type="button" onClick={center} title="Center">
+            <Icon.center size={14} />
+          </button>
+        </div>
 
-      {/* Floating bottom-left: layout selector + status */}
-      <div className="bh-bottom-bar">
-        <select value={ui.graph_layout} onChange={(e) => onUiChange({ graph_layout: e.target.value })} className="bh-layout-select">
-          {LAYOUTS.map((l) => <option key={l} value={l}>{l}</option>)}
-        </select>
-        <span className="bh-status">{status}</span>
-      </div>
-
-      {/* Floating bottom-left: legend */}
-      {showLegend && Object.keys(typeColors).length > 0 && (
-        <div className="graph-legend">
-          <div className="graph-legend-header">
-            <span>Legend</span>
-            <button type="button" className="ghost" onClick={() => setShowLegend(false)}>&times;</button>
-          </div>
-          {Object.entries(typeColors).map(([kind, color]) => (
-            <div key={kind} className="graph-legend-item">
-              <span className="color-swatch" style={{ backgroundColor: color }} />
-              <span>{kind}</span>
+        <div className="legend">
+          <div className="legend-title">Edges</div>
+          {EDGE_LEGEND.map((e) => (
+            <div key={e.kind} className="legend-item">
+              <svg width="24" height="8">
+                <line
+                  x1="0"
+                  y1="4"
+                  x2="24"
+                  y2="4"
+                  stroke={e.color}
+                  strokeWidth="1.5"
+                  strokeDasharray={e.dash ? "3 3" : "none"}
+                />
+              </svg>
+              <span className="mono" style={{ fontSize: 10 }}>
+                {e.kind}
+              </span>
             </div>
           ))}
         </div>
+      </div>
+
+      {/* RIGHT COLLAPSE HANDLE */}
+      {!rightOpen && (
+        <button
+          type="button"
+          className="panel-handle right"
+          onClick={() => setRightOpen(true)}
+          title="Show inspector"
+        >
+          <Icon.chevronR size={14} style={{ transform: "rotate(180deg)" }} />
+        </button>
       )}
 
-      {/* Tooltip */}
-      {tooltip && (
-        <div className="graph-tooltip" style={{ left: tooltip.x, top: tooltip.y }}>
-          <span className="graph-tooltip-kind">{tooltip.kind}</span>
-          <span className="graph-tooltip-label">{tooltip.label}</span>
-        </div>
-      )}
-
-      {/* Context menu */}
-      {contextMenu && (
-        <div className="graph-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={(e) => e.stopPropagation()}>
-          <button type="button" onClick={() => void showDirection(contextMenu.nodeId, "out")}>Show outbound</button>
-          <button type="button" onClick={() => void showDirection(contextMenu.nodeId, "in")}>Show inbound</button>
-          <button type="button" onClick={() => void showNeighbors(contextMenu.nodeId)}>Expand all neighbors</button>
-          <hr />
-          <button type="button" onClick={() => { setPathStart({ id: contextMenu.nodeId, label: contextMenu.nodeLabel }); setContextMenu(null); }}>Set as path start</button>
-          <button type="button" onClick={() => { setPathEnd({ id: contextMenu.nodeId, label: contextMenu.nodeLabel }); setContextMenu(null); }}>Set as path end</button>
-          <hr />
-          <button type="button" onClick={() => { cyRef.current?.getElementById(contextMenu.nodeId)?.style("display", "none"); setContextMenu(null); }}>Hide node</button>
-          <button type="button" onClick={() => { navigator.clipboard.writeText(contextMenu.nodeId); setContextMenu(null); }}>Copy ID</button>
-        </div>
-      )}
-
-      {/* Right panel: inspector (slides in when node selected) */}
-      {selected && (
-        <div className="bh-inspector">
-          <div className="bh-inspector-head">
-            <span className="bh-inspector-icon" style={{ backgroundColor: (selected as GraphNode).color || typeColors[selected.kind] || DEFAULT_NODE_COLOR }}>{selected.kind[0]}</span>
-            <span className="bh-inspector-label">{"label" in selected ? String((selected as { label: string }).label) : selected.kind}</span>
-            <button type="button" className="ghost bh-inspector-close" onClick={() => setSelected(null)}>✕</button>
+      {/* INSPECTOR */}
+      {rightOpen && (selectedNode ? (
+        <aside className="inspector">
+          <button
+            type="button"
+            className="panel-collapse right"
+            onClick={() => setRightOpen(false)}
+            title="Collapse"
+          >
+            <Icon.chevronR size={14} />
+          </button>
+          <div className="insp-header">
+            <div
+              className="insp-glyph"
+              style={{
+                background:
+                  selectedNode.kind === "Finding"
+                    ? "oklch(25% 0.08 25)"
+                    : `color-mix(in oklch, ${KIND_COLOR_VAR[selectedNode.kind] || "var(--silk)"} 18%, transparent)`,
+                color:
+                  selectedNode.kind === "Finding"
+                    ? "var(--sev-high)"
+                    : KIND_COLOR_VAR[selectedNode.kind] || "var(--silk)",
+              }}
+            >
+              {KIND_LETTER[selectedNode.kind] || selectedNode.kind.charAt(0)}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="insp-kind">
+                <span>{selectedNode.kind}</span>
+                {selectedNode.kind === "Finding" && Boolean(selectedNode.properties.severity) && (
+                  <Severity s={String(selectedNode.properties.severity)} />
+                )}
+              </div>
+              <div className="insp-title">{nodeDisplayLabel(selectedNode, 80)}</div>
+            </div>
+            <button
+              type="button"
+              className="chip"
+              style={{ padding: "3px 6px" }}
+              onClick={() => setSelected(null)}
+              title="Close"
+            >
+              <Icon.close size={13} />
+            </button>
           </div>
-          {"source" in selected ? null : (
-            <div className="bh-inspector-actions">
-              <button type="button" onClick={() => void showDirection(selected.id, "out")}>→ Outbound</button>
-              <button type="button" onClick={() => void showDirection(selected.id, "in")}>← Inbound</button>
-              <button type="button" onClick={() => void showNeighbors(selected.id)}>⇔ All</button>
-            </div>
-          )}
-          <details className="bh-inspector-section" open>
-            <summary>Object Information</summary>
-            <div className="bh-inspector-props">
-              <div className="bh-prop"><span className="bh-prop-key">Kind</span><span className="bh-prop-val">{selected.kind}</span></div>
-              {"source" in selected && (
-                <div className="bh-prop"><span className="bh-prop-key">Edge</span><span className="bh-prop-val">{(selected as {source: string; target: string}).source} &rarr; {(selected as {source: string; target: string}).target}</span></div>
-              )}
-              {Object.entries(selected.properties)
-                .filter(([k]) => !["server_version","cookie_missing_flags","missing_headers","directory_listing","response_id"].includes(k))
-                .map(([k, v]) => (
-                <div key={k} className="bh-prop"><span className="bh-prop-key">{k}</span><span className="bh-prop-val">{String(v)}</span></div>
-              ))}
-            </div>
-          </details>
-          {selected.kind === "Endpoint" && (selected.properties.server_version || selected.properties.cookie_missing_flags || selected.properties.missing_headers || selected.properties.directory_listing) && (
-            <details className="bh-inspector-section">
-              <summary>Security Notes</summary>
-              <div className="bh-inspector-props">
-                {selected.properties.server_version && (
-                  <div className="bh-prop bh-prop-warn"><span className="bh-prop-key">Server</span><span className="bh-prop-val">{String(selected.properties.server_version)}</span></div>
-                )}
-                {selected.properties.cookie_missing_flags && (
-                  <div className="bh-prop bh-prop-warn"><span className="bh-prop-key">Cookie flags missing</span><span className="bh-prop-val">{String(selected.properties.cookie_missing_flags)}</span></div>
-                )}
-                {selected.properties.missing_headers && (
-                  <div className="bh-prop bh-prop-warn"><span className="bh-prop-key">Missing headers</span><span className="bh-prop-val">{String(selected.properties.missing_headers)}</span></div>
-                )}
-                {selected.properties.directory_listing && (
-                  <div className="bh-prop bh-prop-warn"><span className="bh-prop-key">Directory listing</span><span className="bh-prop-val">Enabled</span></div>
-                )}
-              </div>
-            </details>
-          )}
-          {"source" in selected ? null : <InspectorRelationships nodeId={selected.id} />}
-        </div>
-      )}
-      {showCustomQuery && (
-        <div className="query-modal-overlay" onClick={() => setShowCustomQuery(false)}>
-          <div className="query-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="query-modal-header">
-              <h3>Custom Query</h3>
-              <button type="button" className="ghost" onClick={() => setShowCustomQuery(false)}>&times;</button>
-            </div>
-            <div className="query-modal-tabs">
-              <button type="button" className={customTab === "visual" ? "sidebar-tab active" : "sidebar-tab"} onClick={() => setCustomTab("visual")}>Visual Builder</button>
-              <button type="button" className={customTab === "raw" ? "sidebar-tab active" : "sidebar-tab"} onClick={() => setCustomTab("raw")}>Raw SQL</button>
-            </div>
-            {customTab === "visual" ? (
-              <div className="query-builder">
-                <label>Show <select value={builderKind} onChange={(e) => setBuilderKind(e.target.value)}>
-                  {NODE_KINDS.map(k => <option key={k} value={k}>{k}</option>)}
-                </select></label>
-                <div className="builder-section">
-                  <div className="builder-section-header">Where <button type="button" className="ghost" onClick={() => setBuilderFilters([...builderFilters, {property: "", operator: "equals", value: ""}])}>+ Add</button></div>
-                  {builderFilters.map((f, i) => (
-                    <div key={i} className="builder-filter-row">
-                      <input placeholder="property" value={f.property} onChange={(e) => { const next = [...builderFilters]; next[i] = {...f, property: e.target.value}; setBuilderFilters(next); }} />
-                      <select value={f.operator} onChange={(e) => { const next = [...builderFilters]; next[i] = {...f, operator: e.target.value}; setBuilderFilters(next); }}>
-                        {OPERATORS.map(o => <option key={o} value={o}>{o}</option>)}
-                      </select>
-                      {!["is_null","is_not_null"].includes(f.operator) && <input placeholder="value" value={f.value} onChange={(e) => { const next = [...builderFilters]; next[i] = {...f, value: e.target.value}; setBuilderFilters(next); }} />}
-                      <button type="button" className="ghost" onClick={() => setBuilderFilters(builderFilters.filter((_, j) => j !== i))}>&times;</button>
-                    </div>
-                  ))}
+
+          <div className="insp-tabs">
+            {(["overview", "properties", "neighbors", "findings"] as const).map((t) => (
+              <button
+                key={t}
+                type="button"
+                className={`insp-tab ${inspTab === t ? "on" : ""}`}
+                onClick={() => setInspTab(t)}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+
+          <div className="insp-body">
+            {inspTab === "overview" && (
+              <OverviewTab node={selectedNode} />
+            )}
+
+            {inspTab === "properties" && (
+              <PropertiesTab node={selectedNode} />
+            )}
+
+            {inspTab === "neighbors" && (
+              <>
+                <div
+                  style={{
+                    fontSize: "var(--fs-xs)",
+                    color: "var(--fg-3)",
+                    marginBottom: 8,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.08em",
+                  }}
+                >
+                  {neighbors.length} connections
                 </div>
-                <div className="builder-section">
-                  <div className="builder-section-header">Connected to <button type="button" className="ghost" onClick={() => setBuilderRel([...builderRel, {edge_kind: "serves", direction: "out"}])}>+ Add</button></div>
-                  {builderRel.map((r, i) => (
-                    <div key={i} className="builder-filter-row">
-                      <select value={r.edge_kind} onChange={(e) => { const next = [...builderRel]; next[i] = {...r, edge_kind: e.target.value}; setBuilderRel(next); }}>
-                        {EDGE_KINDS.map(ek => <option key={ek} value={ek}>{ek}</option>)}
-                      </select>
-                      <select value={r.direction} onChange={(e) => { const next = [...builderRel]; next[i] = {...r, direction: e.target.value}; setBuilderRel(next); }}>
-                        <option value="in">Inbound</option>
-                        <option value="out">Outbound</option>
-                      </select>
-                      <button type="button" className="ghost" onClick={() => setBuilderRel(builderRel.filter((_, j) => j !== i))}>&times;</button>
-                    </div>
-                  ))}
-                </div>
-                <button type="button" className="primary" onClick={() => void runVisualQuery()} disabled={queryLoading}>{queryLoading ? "Running..." : "Run Query"}</button>
-              </div>
-            ) : (
-              <div className="query-raw">
-                <textarea value={rawSql} onChange={(e) => setRawSql(e.target.value)} placeholder="SELECT id, kind, key, properties_json FROM nodes WHERE kind='Endpoint' LIMIT 50" rows={6} className="raw-sql-input" />
-                {rawHistory.length > 0 && (
-                  <div className="raw-history">
-                    <span className="muted">Recent:</span>
-                    {rawHistory.map((h, i) => (
-                      <button key={i} type="button" className="ghost raw-history-item" onClick={() => setRawSql(h)}>{h.slice(0, 60)}...</button>
-                    ))}
+                {neighbors.map(({ edge, node, dir }, i) => (
+                  <div
+                    key={`${edge.id}-${i}`}
+                    className="neighbor"
+                    onClick={() => {
+                      setSelected({ kind: "node", node });
+                      const cy = cyRef.current;
+                      if (cy) {
+                        const el = cy.getElementById(node.id);
+                        if (el.length) {
+                          cy.animate({ center: { eles: el }, zoom: Math.max(cy.zoom(), 1.5) }, { duration: 250 });
+                          el.select();
+                        }
+                      }
+                    }}
+                  >
+                    <span className="nb-edge">
+                      {dir === "out" ? "→" : "←"} {edge.kind}
+                    </span>
+                    <span
+                      className="nb-swatch"
+                      style={{ background: KIND_COLOR_VAR[node.kind] || "var(--silk)" }}
+                    />
+                    <span className="nb-label">{nodeDisplayLabel(node, 60)}</span>
+                  </div>
+                ))}
+                {neighbors.length === 0 && (
+                  <div style={{ color: "var(--fg-3)", fontSize: "var(--fs-sm)" }}>
+                    No neighbors in the current graph.
                   </div>
                 )}
-                <button type="button" className="primary" onClick={() => void runRawQuery()} disabled={queryLoading || !rawSql.trim()}>{queryLoading ? "Running..." : "Run SQL"}</button>
+              </>
+            )}
+
+            {inspTab === "findings" && (
+              <FindingsTab
+                findings={nodeFindings}
+                loading={findingsLoading}
+              />
+            )}
+          </div>
+        </aside>
+      ) : (
+        <aside className="inspector">
+          <button
+            type="button"
+            className="panel-collapse right"
+            onClick={() => setRightOpen(false)}
+            title="Collapse"
+          >
+            <Icon.chevronR size={14} />
+          </button>
+          <div className="insp-body" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, textAlign: "center", color: "var(--fg-3)" }}>
+            <Icon.target size={48} />
+            <div style={{ color: "var(--fg-1)", fontSize: "var(--fs-md)" }}>Nothing selected</div>
+            <div style={{ fontSize: "var(--fs-sm)" }}>
+              Click a node in the graph to inspect it.
+            </div>
+          </div>
+        </aside>
+      ))}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ Tabs
+
+function OverviewTab({ node }: { node: GraphNode }) {
+  const p = node.properties || {};
+  const url = String(p.url || p.action_url || "");
+  const hostname = String(p.hostname || "");
+  const status = p.status_code != null ? Number(p.status_code) : null;
+  const first = (p.first_seen || p.created_at || "") as string;
+  const last = (p.last_seen || p.updated_at || "") as string;
+  const srcs = Array.isArray(p.sources) ? (p.sources as unknown[]).map(String).join(" · ") : "";
+  const size = p.content_length != null ? Number(p.content_length) : null;
+  const tech = (p.server_version || p.server || p.technologies || "") as string;
+
+  const rows: [string, React.ReactNode][] = [
+    ["ID", <span key="id">{node.id}</span>],
+    ["Kind", <span key="kind">{node.kind}</span>],
+  ];
+  if (status != null) rows.push(["Status", <Status key="status" code={status} />]);
+  if (url) rows.push(["URL", <span key="url">{url}</span>]);
+  if (hostname) rows.push(["Host", <span key="host">{hostname}</span>]);
+  if (first) rows.push(["First seen", <span key="first">{String(first)}</span>]);
+  if (last) rows.push(["Last seen", <span key="last">{String(last)}</span>]);
+  if (srcs) rows.push(["Sources", <span key="srcs">{srcs}</span>]);
+  if (size != null) rows.push(["Size", <span key="size" className="num">{size.toLocaleString()} B</span>]);
+  if (tech) rows.push(["Tech", <span key="tech">{String(tech)}</span>]);
+
+  return (
+    <>
+      {rows.map(([k, v]) => (
+        <div key={k} className="prop-row">
+          <div className="prop-key">{k}</div>
+          <div className="prop-val">{v}</div>
+        </div>
+      ))}
+      <div className="insp-actions">
+        <button
+          type="button"
+          className="insp-btn primary"
+          onClick={() => {
+            // find paths not wired yet — placeholder
+          }}
+        >
+          <Icon.path size={11} style={{ marginRight: 4 }} /> Find paths
+        </button>
+        {url && (
+          <a className="insp-btn" href={url} target="_blank" rel="noreferrer">
+            <Icon.link size={11} style={{ marginRight: 4 }} /> Open URL
+          </a>
+        )}
+        <button type="button" className="insp-btn">
+          <Icon.note size={11} style={{ marginRight: 4 }} /> Add note
+        </button>
+        <button
+          type="button"
+          className="insp-btn"
+          onClick={() => {
+            const blob = new Blob([JSON.stringify(node, null, 2)], { type: "application/json" });
+            const u = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = u;
+            a.download = `node-${node.id}.json`;
+            a.click();
+            URL.revokeObjectURL(u);
+          }}
+        >
+          <Icon.export size={11} style={{ marginRight: 4 }} /> Export JSON
+        </button>
+      </div>
+    </>
+  );
+}
+
+function PropertiesTab({ node }: { node: GraphNode }) {
+  const entries = Object.entries(node.properties || {});
+  if (entries.length === 0) {
+    return (
+      <div style={{ color: "var(--fg-3)", fontSize: "var(--fs-sm)" }}>No properties.</div>
+    );
+  }
+  return (
+    <>
+      {entries.map(([k, v]) => {
+        const s = typeof v === "object" && v !== null ? JSON.stringify(v) : String(v);
+        const isNum = typeof v === "number";
+        return (
+          <div key={k} className="prop-row">
+            <div className="prop-key">{k}</div>
+            <div className={`prop-val${isNum ? " num" : ""}`}>{s}</div>
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+function FindingsTab({ findings, loading }: { findings: Finding[]; loading: boolean }) {
+  if (loading) {
+    return (
+      <div style={{ color: "var(--fg-3)", fontSize: "var(--fs-sm)" }}>Loading…</div>
+    );
+  }
+  if (findings.length === 0) {
+    return (
+      <div style={{ color: "var(--fg-3)", fontSize: "var(--fs-sm)" }}>
+        No findings directly attached to this node.
+      </div>
+    );
+  }
+  return (
+    <>
+      {findings.map((f, i) => (
+        <div
+          key={String(f.id ?? i)}
+          style={{
+            marginBottom: 10,
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 10,
+            padding: 10,
+            background: "oklch(20% 0.04 250)",
+            borderRadius: "var(--r-md)",
+            border: "1px solid var(--line-0)",
+          }}
+        >
+          {f.severity && <Severity s={String(f.severity)} />}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ color: "var(--fg-0)", fontWeight: 500, marginBottom: 4 }}>
+              {String(f.name || f.template_id || "Finding")}
+            </div>
+            {f.template_id && (
+              <div
+                style={{
+                  fontFamily: "var(--ff-mono)",
+                  fontSize: 11,
+                  color: "var(--fg-2)",
+                  wordBreak: "break-all",
+                }}
+              >
+                {String(f.template_id)}
               </div>
             )}
           </div>
         </div>
-      )}
-    </div>
+      ))}
+    </>
   );
 }
