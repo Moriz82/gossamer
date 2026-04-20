@@ -1,0 +1,318 @@
+/* ============================================================
+   screens.css — sectioned screen layout (new UI port)
+   Token fallbacks keep the sheet independent of the theme file.
+   ============================================================ */
+:root {
+  /* Scale fallbacks — only applied if root tokens not defined */
+  --bg-0: #060810;
+  --bg-1: #0d1117;
+  --bg-2: #151b27;
+  --bg-3: #1c2333;
+  --fg-0: #e2e6ed;
+  --fg-1: #b8c1d1;
+  --fg-2: #8b95a8;
+  --fg-3: #5c6678;
+  --line-0: #1e2535;
+  --line-1: #2d3a4f;
+  --silk: #b8d4e8;
+  --silk-dim: #7a9bb5;
+  --silk-faint: rgba(184, 212, 232, 0.08);
+  --silk-thread: rgba(184, 212, 232, 0.14);
+  --ok: #7bed9f;
+  --err: #ff6b6b;
+  --fs-micro: 10px;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-base: 13px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
+  --r-sm: 5px;
+  --r-md: 7px;
+  --r-lg: 10px;
+  --t-fast: 120ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ---------- screen shell ---------- */
+.screen {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.screen-header {
+  padding: var(--sp-4) var(--sp-6);
+  border-bottom: 1px solid var(--line-0);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+.screen-title {
+  font-size: var(--fs-lg);
+  font-weight: 500;
+  color: var(--fg-0);
+  margin: 0;
+}
+.screen-sub {
+  font-size: var(--fs-sm);
+  color: var(--fg-2);
+}
+.screen-body {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+  padding: var(--sp-6);
+}
+
+/* ---------- settings screen ---------- */
+.settings-screen .screen-body {
+  max-width: 720px;
+}
+.settings-section {
+  margin-bottom: var(--sp-8, 32px);
+}
+.settings-section-label {
+  font-size: var(--fs-micro);
+  color: var(--fg-3);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 10px;
+}
+.settings-card {
+  background: var(--bg-2);
+  border: 1px solid var(--line-0);
+  border-radius: var(--r-md);
+  padding: 0;
+  overflow: hidden;
+}
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line-0);
+}
+.settings-row:last-child {
+  border-bottom: 0;
+}
+.settings-row-label {
+  flex: 1;
+  font-size: var(--fs-sm);
+  color: var(--fg-0);
+  min-width: 0;
+}
+.settings-row-hint {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--fs-xs);
+  color: var(--fg-2);
+  font-weight: 400;
+}
+.settings-row-value {
+  font-family: var(--ff-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  color: var(--fg-1);
+  font-size: 12px;
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-row-value.multiline {
+  white-space: pre-wrap;
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.settings-row-value.muted {
+  color: var(--fg-3);
+}
+.settings-row-label.mono {
+  font-family: var(--ff-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+}
+.settings-notes {
+  margin-top: 8px;
+  font-size: var(--fs-xs);
+  color: var(--fg-2);
+}
+.settings-notes > div {
+  margin-bottom: 4px;
+}
+.settings-header-spacer {
+  flex: 1;
+}
+.settings-row-stack-field.narrow {
+  width: 120px;
+  flex: 0 0 auto;
+}
+
+/* ---------- settings vertical row (for inputs) ---------- */
+.settings-row-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line-0);
+}
+.settings-row-stack:last-child {
+  border-bottom: 0;
+}
+.settings-row-stack-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.settings-row-stack-header-label {
+  flex: 1;
+  font-size: var(--fs-sm);
+  color: var(--fg-0);
+}
+.settings-row-stack-field {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.settings-row-stack-field input,
+.settings-row-stack-field textarea {
+  flex: 1;
+  background: var(--bg-1);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-sm);
+  color: var(--fg-0);
+  padding: 6px 10px;
+  font-size: var(--fs-sm);
+  font-family: inherit;
+}
+.settings-row-stack-field textarea {
+  font-family: var(--ff-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  resize: vertical;
+  min-height: 64px;
+}
+.settings-row-stack-field input:focus,
+.settings-row-stack-field textarea:focus {
+  outline: none;
+  border-color: var(--silk-dim);
+}
+.settings-row-stack-hint {
+  font-size: var(--fs-xs);
+  color: var(--fg-2);
+  margin-top: 2px;
+}
+.settings-row-stack-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+/* ---------- toggle ---------- */
+.settings-toggle {
+  width: 32px;
+  height: 18px;
+  border-radius: 9px;
+  background: var(--bg-3);
+  position: relative;
+  cursor: pointer;
+  border: 0;
+  padding: 0;
+  flex-shrink: 0;
+  transition: background var(--t-fast);
+}
+.settings-toggle.on {
+  background: var(--silk);
+}
+.settings-toggle-knob {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--bg-0);
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  transition: left 150ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.settings-toggle.on .settings-toggle-knob {
+  left: 16px;
+}
+.settings-toggle:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ---------- button (btn) — local variant, doesn't clash with app btn ---------- */
+.settings-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: var(--bg-3);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-sm);
+  color: var(--fg-1);
+  font-size: var(--fs-sm);
+  font-family: inherit;
+  cursor: pointer;
+  transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast);
+}
+.settings-btn:hover:not(:disabled) {
+  background: var(--line-1);
+  color: var(--fg-0);
+}
+.settings-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.settings-btn.primary {
+  background: var(--silk-faint);
+  border-color: var(--silk-dim);
+  color: var(--silk);
+}
+.settings-btn.primary:hover:not(:disabled) {
+  background: var(--silk-thread);
+}
+.settings-btn.danger {
+  color: var(--err);
+  border-color: var(--err);
+  background: transparent;
+}
+.settings-btn.danger:hover:not(:disabled) {
+  background: rgba(255, 107, 107, 0.1);
+}
+
+/* ---------- toast inside settings ---------- */
+.settings-flash {
+  padding: 10px 14px;
+  background: var(--silk-faint);
+  border: 1px solid var(--silk-dim);
+  color: var(--silk);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
+  margin-bottom: var(--sp-4, 16px);
+}
+.settings-flash.error {
+  background: rgba(255, 107, 107, 0.08);
+  border-color: var(--err);
+  color: var(--err);
+}
+
+/* ---------- raw JSON details ---------- */
+.settings-raw {
+  background: var(--bg-2);
+  border: 1px solid var(--line-0);
+  border-radius: var(--r-md);
+  padding: 12px 16px;
+  margin-top: 16px;
+}
+.settings-raw > summary {
+  cursor: pointer;
+  font-size: var(--fs-sm);
+  color: var(--fg-1);
+  user-select: none;
+}
+.settings-raw pre {
+  font-family: var(--ff-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: var(--fs-xs);
+  color: var(--fg-1);
+  margin: 12px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
