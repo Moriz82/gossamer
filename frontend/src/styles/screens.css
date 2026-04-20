@@ -1,0 +1,357 @@
+/*
+ * Gossamer — screens foundation + findings panel styles.
+ *
+ * This file ships the design-token scaffolding (tokens + light base rules)
+ * needed by panels that have been ported to the new design system, plus the
+ * FINDINGS selectors (`.findings`, `.find-*`, `.fd-*`). Panels that still use
+ * the legacy `styles.css` aren't affected because they don't reference these
+ * variables.
+ *
+ * If another unit adds a dedicated tokens/base.css under `src/styles/`, those
+ * definitions will override the `:root` block below harmlessly — CSS cascade
+ * picks up the later import.
+ */
+
+/* ============ TOKENS ============ */
+:root {
+  --accent-hue: 210;
+
+  --bg-0: oklch(12% 0.01 250);
+  --bg-1: oklch(15% 0.012 250);
+  --bg-2: oklch(18% 0.013 250);
+  --bg-3: oklch(22% 0.015 250);
+  --bg-4: oklch(28% 0.018 250);
+
+  --fg-0: oklch(96% 0.01 250);
+  --fg-1: oklch(78% 0.01 250);
+  --fg-2: oklch(58% 0.015 250);
+  --fg-3: oklch(42% 0.015 250);
+  --fg-4: oklch(30% 0.012 250);
+
+  --line-0: oklch(22% 0.01 250);
+  --line-1: oklch(28% 0.015 250);
+  --line-2: oklch(36% 0.018 250);
+
+  --silk: oklch(88% 0.04 var(--accent-hue));
+  --silk-dim: oklch(72% 0.05 var(--accent-hue));
+  --silk-low: oklch(52% 0.06 var(--accent-hue));
+  --silk-glow: oklch(88% 0.04 var(--accent-hue) / 0.2);
+  --silk-faint: oklch(88% 0.04 var(--accent-hue) / 0.08);
+  --silk-thread: oklch(88% 0.04 var(--accent-hue) / 0.12);
+
+  --sev-crit: oklch(65% 0.2 25);
+  --sev-high: oklch(72% 0.18 35);
+  --sev-med:  oklch(78% 0.16 80);
+  --sev-low:  oklch(78% 0.14 160);
+  --sev-info: oklch(75% 0.12 230);
+
+  --ok: oklch(75% 0.13 155);
+  --warn: oklch(80% 0.15 75);
+  --err: oklch(70% 0.18 25);
+
+  --ff-sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --ff-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --ff-serif: 'IBM Plex Serif', Georgia, serif;
+
+  --fs-micro: 10px;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-base: 13px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
+  --fs-xl: 20px;
+  --fs-2xl: 28px;
+  --fs-3xl: 40px;
+
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px;
+  --sp-5: 20px; --sp-6: 24px; --sp-8: 32px; --sp-10: 40px; --sp-12: 48px;
+
+  --r-xs: 3px; --r-sm: 5px; --r-md: 7px; --r-lg: 10px; --r-xl: 14px;
+
+  --sh-sm: 0 1px 2px oklch(0% 0 0 / 0.4);
+  --sh-md: 0 4px 16px oklch(0% 0 0 / 0.35);
+  --sh-lg: 0 12px 48px oklch(0% 0 0 / 0.5);
+
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --t-fast: 120ms var(--ease);
+  --t-med: 200ms var(--ease);
+}
+
+/* ============ SCREEN SHELL ============ */
+.screen {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg-0);
+  color: var(--fg-0);
+  font-family: var(--ff-sans);
+}
+.screen-header {
+  padding: var(--sp-4) var(--sp-6);
+  border-bottom: 1px solid var(--line-0);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+.screen-title {
+  font-size: var(--fs-lg);
+  font-weight: 500;
+  color: var(--fg-0);
+  margin: 0;
+}
+.screen-sub {
+  font-size: var(--fs-sm);
+  color: var(--fg-2);
+}
+.screen-body {
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Button (shared with other ported screens) */
+.screen .btn,
+.screen .btn.primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-sm);
+  color: var(--fg-1);
+  font-size: var(--fs-sm);
+  transition: all var(--t-fast);
+  cursor: pointer;
+  font-family: inherit;
+}
+.screen .btn:hover:not(:disabled) { background: var(--bg-3); color: var(--fg-0); }
+.screen .btn.primary {
+  background: var(--silk-faint);
+  border-color: var(--silk-dim);
+  color: var(--silk);
+}
+.screen .btn.primary:hover:not(:disabled) { background: var(--silk-thread); color: var(--silk); }
+.screen .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Searchbar */
+.screen .searchbar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: var(--bg-0);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-sm);
+  color: var(--fg-2);
+}
+.screen .searchbar input {
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: var(--fg-0);
+  font-size: var(--fs-sm);
+  width: 100%;
+  min-width: 0;
+}
+.screen .searchbar input::placeholder { color: var(--fg-3); }
+
+/* Chip */
+.screen .chip,
+.screen .chip-row .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-0);
+  border-radius: 99px;
+  color: var(--fg-2);
+  font-size: var(--fs-xs);
+  text-transform: lowercase;
+  transition: all var(--t-fast);
+  cursor: pointer;
+  font-family: inherit;
+}
+.screen .chip:hover:not(:disabled) { border-color: var(--line-2); color: var(--fg-1); }
+.screen .chip.on {
+  background: var(--silk-faint);
+  border-color: var(--silk-dim);
+  color: var(--silk);
+}
+.screen .chip.mono { font-family: var(--ff-mono); text-transform: none; }
+.screen .chip-row { display: inline-flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+
+/* Severity chip (from primitives.Severity) */
+.screen .sev-chip {
+  display: inline-block;
+  font-family: var(--ff-mono);
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.screen .sev-chip.crit    { background: color-mix(in oklch, var(--sev-crit) 20%, transparent); color: var(--sev-crit); }
+.screen .sev-chip.high    { background: color-mix(in oklch, var(--sev-high) 20%, transparent); color: var(--sev-high); }
+.screen .sev-chip.med     { background: color-mix(in oklch, var(--sev-med) 20%, transparent);  color: var(--sev-med); }
+.screen .sev-chip.low     { background: color-mix(in oklch, var(--sev-low) 20%, transparent);  color: var(--sev-low); }
+.screen .sev-chip.info    { background: color-mix(in oklch, var(--sev-info) 20%, transparent); color: var(--sev-info); }
+.screen .sev-chip.unknown { background: var(--bg-3); color: var(--fg-2); }
+
+/* ============ FINDINGS ============ */
+.findings {
+  display: grid;
+  grid-template-columns: 1fr 420px;
+  height: 100%;
+  min-height: 0;
+  flex: 1;
+}
+.findings.no-detail { grid-template-columns: 1fr; }
+
+.findings-list {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--line-0);
+  min-width: 0;
+}
+.find-toolbar {
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--line-0);
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
+  background: var(--bg-1);
+  flex-wrap: wrap;
+}
+.find-summary {
+  display: flex;
+  padding: var(--sp-4) var(--sp-4) var(--sp-3);
+  gap: var(--sp-3);
+  border-bottom: 1px solid var(--line-0);
+  background: var(--bg-1);
+}
+.find-stat {
+  flex: 1;
+  padding: var(--sp-3);
+  background: var(--bg-0);
+  border: 1px solid var(--line-0);
+  border-radius: var(--r-md);
+  border-left-width: 2px;
+  border-left-style: solid;
+}
+.find-stat .fs-lbl {
+  font-size: var(--fs-micro);
+  text-transform: uppercase;
+  color: var(--fg-3);
+  letter-spacing: 0.1em;
+}
+.find-stat .fs-num {
+  font-size: var(--fs-2xl);
+  font-family: var(--ff-mono);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  color: var(--fg-0);
+  margin-top: 4px;
+}
+.find-stat.crit { border-left-color: var(--sev-crit); }
+.find-stat.crit .fs-num { color: var(--sev-crit); }
+.find-stat.high { border-left-color: var(--sev-high); }
+.find-stat.high .fs-num { color: var(--sev-high); }
+.find-stat.med  { border-left-color: var(--sev-med); }
+.find-stat.med  .fs-num { color: var(--sev-med); }
+.find-stat.low  { border-left-color: var(--sev-low); }
+.find-stat.low  .fs-num { color: var(--sev-low); }
+.find-stat.info { border-left-color: var(--sev-info); }
+.find-stat.info .fs-num { color: var(--sev-info); }
+
+.find-rows {
+  overflow-y: auto;
+  flex: 1;
+}
+.find-row {
+  display: grid;
+  grid-template-columns: 70px 1fr 200px 80px;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--line-0);
+  cursor: pointer;
+  align-items: center;
+  transition: background var(--t-fast);
+}
+.find-row:hover { background: var(--bg-2); }
+.find-row.sel {
+  background: var(--silk-faint);
+  border-left: 2px solid var(--silk);
+  padding-left: calc(var(--sp-4) - 2px);
+}
+.find-row .fr-title { font-size: var(--fs-sm); color: var(--fg-0); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.find-row .fr-target { font-family: var(--ff-mono); font-size: var(--fs-xs); color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.find-row .fr-when { font-family: var(--ff-mono); font-size: var(--fs-xs); color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.find-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  flex: 1;
+  padding: var(--sp-8);
+  color: var(--fg-2);
+  text-align: center;
+  gap: 6px;
+}
+.find-empty .find-empty-title { color: var(--fg-0); font-size: var(--fs-md); }
+.find-empty .find-empty-sub { font-size: var(--fs-sm); color: var(--fg-2); max-width: 360px; }
+
+.find-detail {
+  overflow-y: auto;
+  background: var(--bg-1);
+  padding: var(--sp-5);
+}
+.fd-title {
+  font-size: var(--fs-lg);
+  font-weight: 500;
+  color: var(--fg-0);
+  line-height: 1.3;
+  margin: 6px 0 var(--sp-3);
+  word-break: break-word;
+}
+.fd-evidence {
+  background: var(--bg-0);
+  border: 1px solid var(--line-0);
+  border-radius: var(--r-md);
+  padding: var(--sp-3);
+  font-family: var(--ff-mono);
+  font-size: var(--fs-xs);
+  color: var(--fg-1);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
+}
+.fd-section {
+  margin-top: var(--sp-4);
+}
+.fd-section-title {
+  font-size: var(--fs-micro);
+  color: var(--fg-3);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: var(--sp-2);
+}
+.fd-remediation {
+  font-size: var(--fs-sm);
+  color: var(--fg-1);
+  line-height: 1.55;
+}
+.fd-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}

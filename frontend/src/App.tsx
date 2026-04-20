@@ -60,6 +60,7 @@ const tabGroups = [
     tabs: [
       { id: "operations", label: "Ingest & Crawl" },
       { id: "scanners", label: "Scanners" },
+      { id: "findings", label: "Findings" },
     ],
   },
   {
@@ -238,6 +239,23 @@ export default function App() {
     return () => document.removeEventListener("click", handler);
   }, [showProjectMenu]);
 
+  // Allow panels to request cross-panel navigation without prop drilling.
+  useEffect(() => {
+    const onNavigate = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ tab?: string }>).detail;
+      if (detail && typeof detail.tab === "string") {
+        setTab(detail.tab as Tab);
+      }
+    };
+    const onOpenInGraph = () => setTab("graph");
+    window.addEventListener("gossamer:navigate", onNavigate);
+    window.addEventListener("gossamer:open-in-graph", onOpenInGraph);
+    return () => {
+      window.removeEventListener("gossamer:navigate", onNavigate);
+      window.removeEventListener("gossamer:open-in-graph", onOpenInGraph);
+    };
+  }, []);
+
   if (!booted) {
     return <div className="boot-screen">Loading…</div>;
   }
@@ -349,6 +367,7 @@ export default function App() {
         {tab === "intel" ? <IntelPanel /> : null}
         {tab === "sitemap" ? <SitemapPanel /> : null}
         {tab === "scanners" ? <ScannersPanel /> : null}
+        {tab === "findings" ? <FindingsPanel onOpenInGraph={() => setTab("graph")} /> : null}
         {tab === "data" ? <DataPanel /> : null}
         {tab === "registry" ? <RegistryPanel /> : null}
       </main>
