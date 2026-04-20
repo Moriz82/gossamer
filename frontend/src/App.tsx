@@ -12,6 +12,10 @@ import FindingsPanel from "./panels/FindingsPanel";
 import ScannersPanel from "./panels/ScannersPanel";
 import SitemapPanel from "./panels/SitemapPanel";
 import IntelPanel from "./panels/IntelPanel";
+import Shell, { type Tab, type Project } from "./components/Shell";
+import CommandPalette from "./components/CommandPalette";
+import { Toast } from "./components/Primitives";
+import TweaksPanel, { TWEAK_DEFAULTS, type TweaksState } from "./components/TweaksPanel";
 
 const UI_DEFAULT: UIPrefs = {
   graph_layout: "cose",
@@ -23,19 +27,6 @@ const UI_DEFAULT: UIPrefs = {
   wheel_sensitivity: 0.25,
 };
 
-type Tab =
-  | "graph"
-  | "sitemap"
-  | "operations"
-  | "settings"
-  | "ingestors"
-  | "queries"
-  | "findings"
-  | "scanners"
-  | "intel"
-  | "data"
-  | "registry";
-
 type GraphStats = { total_nodes: number; total_edges: number };
 
 type SettingsPayload = {
@@ -46,47 +37,56 @@ function mergeUi(patch: Partial<UIPrefs>): UIPrefs {
   return { ...UI_DEFAULT, ...patch };
 }
 
-const tabGroups = [
-  {
-    label: "Explore",
-    tabs: [
-      { id: "graph", label: "Graph" },
-      { id: "sitemap", label: "Sitemap" },
-      { id: "intel", label: "Intel" },
-    ],
-  },
-  {
-    label: "Operations",
-    tabs: [
-      { id: "operations", label: "Ingest & Crawl" },
-      { id: "scanners", label: "Scanners" },
-    ],
-  },
-  {
-    label: "Configure",
-    tabs: [
-      { id: "settings", label: "Settings" },
-      { id: "ingestors", label: "Ingestors" },
-      { id: "registry", label: "Types" },
-      { id: "queries", label: "Queries" },
-      { id: "data", label: "Data" },
-    ],
-  },
-] as const;
+const VALID_TABS: Tab[] = [
+  "graph",
+  "sitemap",
+  "intel",
+  "operations",
+  "scanners",
+  "findings",
+  "settings",
+  "ingestors",
+  "queries",
+  "registry",
+  "data",
+];
+
+const TAB_STORAGE_KEY = "gossamer.tab";
+
+function readPersistedTab(): Tab {
+  try {
+    const raw = localStorage.getItem(TAB_STORAGE_KEY);
+    if (raw && (VALID_TABS as string[]).includes(raw)) return raw as Tab;
+  } catch {
+    /* ignore */
+  }
+  return "graph";
+}
 
 export default function App() {
   const [booted, setBooted] = useState(false);
   const [needLogin, setNeedLogin] = useState(true);
-  const [tab, setTab] = useState<Tab>("graph");
+  const [tab, setTabState] = useState<Tab>(() => readPersistedTab());
   const [ui, setUi] = useState<UIPrefs>(UI_DEFAULT);
   const [toast, setToast] = useState<string | null>(null);
   const [graphStats, setGraphStats] = useState<GraphStats | null>(null);
   const [backendType, setBackendType] = useState<string>("sqlite");
-  const [projects, setProjects] = useState<{name: string; created_at: string; has_database: boolean; size_bytes: number}[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [activeProject, setActiveProject] = useState("default");
-  const [showProjectMenu, setShowProjectMenu] = useState(false);
-  const [newProjectName, setNewProjectName] = useState("");
   const [projectBusy, setProjectBusy] = useState(false);
+  const [cmdkOpen, setCmdkOpen] = useState(false);
+  const [tweaks, setTweaks] = useState<TweaksState>(() => ({ ...TWEAK_DEFAULTS }));
+  const [tweaksOpen, setTweaksOpen] = useState(false);
+  const [editModeActive, setEditModeActive] = useState(false);
+
+  const setTab = useCallback((next: Tab) => {
+    setTabState(next);
+    try {
+      localStorage.setItem(TAB_STORAGE_KEY, next);
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   const loadSettings = useCallback(async () => {
     try {
@@ -102,63 +102,88 @@ export default function App() {
   }, []);
 
   const loadProjects = useCallback(() => {
-    apiJson<{name: string; created_at: string; has_database: boolean; size_bytes: number}[]>("/api/projects")
-      .then(setProjects).catch(() => {});
+    apiJson<Project[]>("/api/projects").then(setProjects).catch(() => {});
   }, []);
 
-  const createProject = useCallback(async () => {
-    if (!newProjectName.trim()) return;
-    setProjectBusy(true);
-    try {
-      await apiJson("/api/projects", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newProjectName.trim() }),
-      });
-      setNewProjectName("");
-      loadProjects();
-    } catch (e) { setToast(e instanceof Error ? e.message : String(e)); }
-    finally { setProjectBusy(false); }
-  }, [newProjectName, loadProjects]);
+  const createProject = useCallback(
+    async (name: string) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      setProjectBusy(true);
+      try {
+        await apiJson("/api/projects", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: trimmed }),
+        });
+        loadProjects();
+      } catch (e) {
+        setToast(e instanceof Error ? e.message : String(e));
+      } finally {
+        setProjectBusy(false);
+      }
+    },
+    [loadProjects],
+  );
 
-  const switchProject = useCallback(async (name: string) => {
-    setProjectBusy(true);
-    try {
-      await apiJson(`/api/projects/${name}/activate`, { method: "POST" });
-      setActiveProject(name);
-      setShowProjectMenu(false);
-      loadGraphStats();
-    } catch (e) { setToast(e instanceof Error ? e.message : String(e)); }
-    finally { setProjectBusy(false); }
-  }, [loadGraphStats]);
+  const switchProject = useCallback(
+    async (name: string) => {
+      setProjectBusy(true);
+      try {
+        await apiJson(`/api/projects/${name}/activate`, { method: "POST" });
+        setActiveProject(name);
+        loadGraphStats();
+      } catch (e) {
+        setToast(e instanceof Error ? e.message : String(e));
+      } finally {
+        setProjectBusy(false);
+      }
+    },
+    [loadGraphStats],
+  );
 
-  const deleteProject = useCallback(async (name: string) => {
-    if (!confirm(`Delete project "${name}" and all its data?`)) return;
-    setProjectBusy(true);
-    try {
-      await apiJson(`/api/projects/${name}`, { method: "DELETE" });
-      loadProjects();
-    } catch (e) { setToast(e instanceof Error ? e.message : String(e)); }
-    finally { setProjectBusy(false); }
-  }, [loadProjects]);
+  const deleteProject = useCallback(
+    async (name: string) => {
+      if (!confirm(`Delete project "${name}" and all its data?`)) return;
+      setProjectBusy(true);
+      try {
+        await apiJson(`/api/projects/${name}`, { method: "DELETE" });
+        loadProjects();
+      } catch (e) {
+        setToast(e instanceof Error ? e.message : String(e));
+      } finally {
+        setProjectBusy(false);
+      }
+    },
+    [loadProjects],
+  );
 
   const exportProject = useCallback(async (name: string) => {
     setProjectBusy(true);
     try {
-      const r = await apiJson<{ok: boolean; path: string}>("/api/projects/export", {
-        method: "POST", headers: { "Content-Type": "application/json" },
+      const r = await apiJson<{ ok: boolean; path: string }>("/api/projects/export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, format: "zip" }),
       });
       setToast(`Exported to ${r.path}`);
-    } catch (e) { setToast(e instanceof Error ? e.message : String(e)); }
-    finally { setProjectBusy(false); }
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : String(e));
+    } finally {
+      setProjectBusy(false);
+    }
   }, []);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = window.setTimeout(() => setToast(null), 2500);
+    return () => window.clearTimeout(t);
+  }, [toast]);
 
   useEffect(() => {
     let cancelled = false;
     const finishBoot = () => {
-      if (!cancelled) {
-        setBooted(true);
-      }
+      if (!cancelled) setBooted(true);
     };
 
     if (!isAuthStored()) {
@@ -187,9 +212,7 @@ export default function App() {
         }
       })
       .catch(() => {
-        if (!cancelled) {
-          setNeedLogin(true);
-        }
+        if (!cancelled) setNeedLogin(true);
       })
       .finally(() => {
         window.clearTimeout(timer);
@@ -222,21 +245,97 @@ export default function App() {
         throw new Error(t || r.statusText);
       }
       setToast("Saved UI preferences.");
-      setTimeout(() => setToast(null), 2500);
     } catch (e) {
       setToast(e instanceof Error ? e.message : String(e));
     }
   }, [ui]);
 
   useEffect(() => {
-    if (!showProjectMenu) return;
-    const handler = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (!target.closest(".project-selector")) setShowProjectMenu(false);
+    const r = document.documentElement;
+    r.style.setProperty("--accent-hue", String(tweaks.accentHue));
+    r.dataset.density = tweaks.density;
+    r.style.setProperty("--ff-mono", `'${tweaks.mono}', ui-monospace, monospace`);
+  }, [tweaks]);
+
+  const setTweak = useCallback(
+    <K extends keyof TweaksState>(key: K, value: TweaksState[K]) => {
+      setTweaks((prev) => {
+        const next = { ...prev, [key]: value };
+        try {
+          window.parent?.postMessage(
+            { type: "__edit_mode_set_keys", edits: { [key]: value } },
+            "*",
+          );
+        } catch {
+          /* ignore cross-origin */
+        }
+        return next;
+      });
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const handler = (e: MessageEvent) => {
+      const data = e.data as { type?: string } | undefined;
+      if (!data) return;
+      if (data.type === "__activate_edit_mode") {
+        setEditModeActive(true);
+        setTweaksOpen(true);
+      }
+      if (data.type === "__deactivate_edit_mode") {
+        setEditModeActive(false);
+        setTweaksOpen(false);
+      }
     };
-    document.addEventListener("click", handler);
-    return () => document.removeEventListener("click", handler);
-  }, [showProjectMenu]);
+    window.addEventListener("message", handler);
+    try {
+      window.parent?.postMessage({ type: "__edit_mode_available" }, "*");
+    } catch {
+      /* ignore */
+    }
+    return () => window.removeEventListener("message", handler);
+  }, []);
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setCmdkOpen(true);
+        return;
+      }
+      const t = e.target as HTMLElement | null;
+      const tag = t?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || t?.isContentEditable) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const map: Record<string, Tab> = {
+        g: "graph",
+        s: "sitemap",
+        i: "intel",
+        o: "operations",
+        n: "scanners",
+        f: "findings",
+        ",": "settings",
+      };
+      const target = map[e.key];
+      if (target) {
+        e.preventDefault();
+        setTab(target);
+        return;
+      }
+      if (e.key === "/") {
+        e.preventDefault();
+        setCmdkOpen(true);
+      }
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [setTab]);
+
+  const onLogout = useCallback(() => {
+    clearAuth();
+    setNeedLogin(true);
+  }, []);
 
   if (!booted) {
     return <div className="boot-screen">Loading…</div>;
@@ -246,112 +345,62 @@ export default function App() {
     return <LoginGate onAuthed={onAuthed} />;
   }
 
+  const nodeCount = graphStats?.total_nodes ?? 0;
+
   return (
-    <div className="app-shell">
-      <header className="app-header">
-        <div className="brand">
-          <svg className="brand-logo" viewBox="0 0 32 32" width="24" height="24">
-            <g stroke="currentColor" strokeWidth="0.6" opacity="0.6">
-              <line x1="16" y1="16" x2="16" y2="1"/>
-              <line x1="16" y1="16" x2="29" y2="5"/>
-              <line x1="16" y1="16" x2="31" y2="16"/>
-              <line x1="16" y1="16" x2="29" y2="27"/>
-              <line x1="16" y1="16" x2="16" y2="31"/>
-              <line x1="16" y1="16" x2="3" y2="27"/>
-              <line x1="16" y1="16" x2="1" y2="16"/>
-              <line x1="16" y1="16" x2="3" y2="5"/>
-            </g>
-            <g fill="none" stroke="currentColor" strokeWidth="0.4" opacity="0.35">
-              <circle cx="16" cy="16" r="5"/>
-              <circle cx="16" cy="16" r="10"/>
-              <circle cx="16" cy="16" r="14"/>
-            </g>
-            <circle cx="16" cy="16" r="2" fill="currentColor" opacity="0.8"/>
-          </svg>
-          Gossamer
-        </div>
-        <div className="project-selector">
-          <button type="button" className="project-selector-btn" onClick={() => { setShowProjectMenu(!showProjectMenu); if (!showProjectMenu) loadProjects(); }}>
-            {activeProject}
-            <span className="project-chevron">&#9662;</span>
-          </button>
-          {showProjectMenu && (
-            <div className="project-menu">
-              <div className="project-menu-header">Projects</div>
-              {projects.map(p => (
-                <div key={p.name} className={`project-menu-item ${p.name === activeProject ? "active" : ""}`}>
-                  <button type="button" className="project-menu-name" onClick={() => void switchProject(p.name)} disabled={projectBusy}>
-                    {p.name}
-                    {p.name === activeProject && <span className="project-active-dot" />}
-                  </button>
-                  <div className="project-menu-actions">
-                    <button type="button" className="ghost" onClick={() => void exportProject(p.name)} disabled={projectBusy} title="Export">&darr;</button>
-                    {p.name !== "default" && (
-                      <button type="button" className="ghost" onClick={() => void deleteProject(p.name)} disabled={projectBusy} title="Delete">&times;</button>
-                    )}
-                  </div>
-                </div>
-              ))}
-              <div className="project-menu-create">
-                <input type="text" placeholder="New project name" value={newProjectName} onChange={(e) => setNewProjectName(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") void createProject(); }} />
-                <button type="button" className="primary" onClick={() => void createProject()} disabled={projectBusy || !newProjectName.trim()}>Create</button>
-              </div>
-            </div>
-          )}
-        </div>
-        <nav className="nav-groups">
-          {tabGroups.map((group) => (
-            <div key={group.label} className="nav-group">
-              <span className="nav-group-label">{group.label}</span>
-              <div className="nav-group-tabs">
-                {group.tabs.map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    className={tab === t.id ? "tab active" : "tab"}
-                    onClick={() => setTab(t.id as Tab)}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ))}
-        </nav>
-        <div className="header-status">
-          <span className="badge badge-silk">{backendType}</span>
-          {graphStats && (
-            <span className="badge">{graphStats.total_nodes} nodes</span>
-          )}
-          <span className="status-dot green" />
-        </div>
-        <button
-          type="button"
-          className="ghost"
-          onClick={() => {
-            clearAuth();
-            setNeedLogin(true);
-          }}
-        >
-          Sign out
-        </button>
-      </header>
-      {toast ? <div className="toast">{toast}</div> : null}
-      <main className="main-area panel-enter">
-        {tab === "graph" ? (
-          <GraphPanel ui={ui} onUiChange={(p) => setUi((prev) => ({ ...prev, ...p }))} onPersistUi={onPersistUi} backendType={backendType} />
-        ) : null}
-        {tab === "operations" ? <OperationsPanel /> : null}
-        {tab === "settings" ? <SettingsPanel onRuntimeUpdated={() => void loadSettings()} /> : null}
-        {tab === "ingestors" ? <IngestorsPanel /> : null}
-        {tab === "queries" ? <QueriesPanel /> : null}
-        {tab === "intel" ? <IntelPanel /> : null}
-        {tab === "sitemap" ? <SitemapPanel /> : null}
-        {tab === "scanners" ? <ScannersPanel /> : null}
-        {tab === "data" ? <DataPanel /> : null}
-        {tab === "registry" ? <RegistryPanel /> : null}
-      </main>
-    </div>
+    <>
+      <Shell
+        tab={tab}
+        setTab={setTab}
+        graphStats={{ nodes: nodeCount }}
+        onOpenCmdk={() => setCmdkOpen(true)}
+        onLogout={onLogout}
+        projects={projects}
+        activeProject={activeProject}
+        onSwitchProject={(n) => void switchProject(n)}
+        onCreateProject={(n) => void createProject(n)}
+        onDeleteProject={(n) => void deleteProject(n)}
+        onExportProject={(n) => void exportProject(n)}
+        onReloadProjects={loadProjects}
+        projectBusy={projectBusy}
+      >
+        {tab === "graph" && (
+          <GraphPanel
+            ui={ui}
+            onUiChange={(p) => setUi((prev) => ({ ...prev, ...p }))}
+            onPersistUi={onPersistUi}
+            backendType={backendType}
+          />
+        )}
+        {tab === "operations" && <OperationsPanel />}
+        {tab === "settings" && <SettingsPanel onRuntimeUpdated={() => void loadSettings()} />}
+        {tab === "ingestors" && <IngestorsPanel />}
+        {tab === "queries" && <QueriesPanel />}
+        {tab === "intel" && <IntelPanel />}
+        {tab === "sitemap" && <SitemapPanel />}
+        {tab === "scanners" && <ScannersPanel />}
+        {tab === "data" && <DataPanel />}
+        {tab === "registry" && <RegistryPanel />}
+        {tab === "findings" && <FindingsPanel />}
+      </Shell>
+
+      <CommandPalette
+        open={cmdkOpen}
+        onClose={() => setCmdkOpen(false)}
+        onNavigate={(t) => {
+          if ((VALID_TABS as string[]).includes(t)) setTab(t as Tab);
+        }}
+      />
+
+      <Toast msg={toast} />
+
+      {editModeActive && tweaksOpen && (
+        <TweaksPanel
+          tweaks={tweaks}
+          setTweak={setTweak}
+          onClose={() => setTweaksOpen(false)}
+        />
+      )}
+    </>
   );
 }
