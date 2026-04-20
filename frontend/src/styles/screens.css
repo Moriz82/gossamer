@@ -1,0 +1,270 @@
+/* ============ TOKEN FALLBACKS ============
+   Minimal token set so the Intel panel renders standalone.
+   A separate unit owns the full tokens.css/base.css and will override these. */
+:root {
+  --bg-0: oklch(12% 0.01 250);
+  --bg-1: oklch(15% 0.012 250);
+  --bg-2: oklch(18% 0.013 250);
+  --bg-3: oklch(22% 0.015 250);
+
+  --fg-0: oklch(96% 0.01 250);
+  --fg-1: oklch(78% 0.01 250);
+  --fg-2: oklch(58% 0.015 250);
+  --fg-3: oklch(42% 0.015 250);
+
+  --line-0: oklch(22% 0.01 250);
+  --line-1: oklch(28% 0.015 250);
+  --line-2: oklch(36% 0.018 250);
+
+  --silk: oklch(88% 0.04 210);
+  --silk-dim: oklch(72% 0.05 210);
+  --silk-faint: oklch(88% 0.04 210 / 0.08);
+  --silk-thread: oklch(88% 0.04 210 / 0.12);
+  --silk-glow: oklch(88% 0.04 210 / 0.2);
+
+  --sev-crit: oklch(65% 0.2 25);
+  --sev-high: oklch(72% 0.18 35);
+  --sev-med:  oklch(78% 0.16 80);
+  --sev-low:  oklch(78% 0.14 160);
+  --sev-info: oklch(75% 0.12 230);
+
+  --kind-host:     oklch(78% 0.14 160);
+  --kind-endpoint: oklch(80% 0.10 220);
+
+  --ok: oklch(75% 0.13 155);
+
+  --ff-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --fs-micro: 10px;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-base: 13px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
+  --fs-2xl: 28px;
+  --fs-3xl: 40px;
+
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px;
+  --sp-5: 20px; --sp-6: 24px; --sp-8: 32px;
+
+  --r-xs: 3px; --r-sm: 5px; --r-md: 7px; --r-lg: 10px; --r-xl: 14px;
+
+  --t-fast: 120ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ============ SCREEN CHROME (shared) ============ */
+.screen {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.screen-header {
+  padding: var(--sp-4) var(--sp-6);
+  border-bottom: 1px solid var(--line-0);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+.screen-title {
+  font-size: var(--fs-lg);
+  font-weight: 500;
+  color: var(--fg-0);
+  margin: 0;
+}
+.screen-sub {
+  font-size: var(--fs-sm);
+  color: var(--fg-2);
+}
+.screen-body {
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.chip-row {
+  display: inline-flex;
+  gap: 2px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-0);
+  border-radius: var(--r-sm);
+  padding: 2px;
+}
+.chip {
+  background: transparent;
+  border: 0;
+  color: var(--fg-2);
+  font-family: var(--ff-mono);
+  font-size: var(--fs-xs);
+  padding: 4px 10px;
+  border-radius: var(--r-xs);
+  cursor: pointer;
+  transition: background var(--t-fast), color var(--t-fast);
+}
+.chip:hover { color: var(--fg-0); }
+.chip.on {
+  background: var(--silk-faint);
+  color: var(--silk);
+}
+
+/* ============ SHARED CARDS / STATS / BARS / TARGETS ============ */
+.card {
+  background: var(--bg-1);
+  border: 1px solid var(--line-0);
+  border-radius: var(--r-lg);
+  padding: var(--sp-4);
+  position: relative;
+  overflow: hidden;
+}
+.card-title {
+  font-size: var(--fs-micro);
+  color: var(--fg-3);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin: 0 0 var(--sp-2);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.stat-big {
+  font-size: var(--fs-3xl);
+  font-family: var(--ff-mono);
+  line-height: 1;
+  color: var(--fg-0);
+  font-variant-numeric: tabular-nums;
+}
+.stat-delta {
+  margin-top: 6px;
+  font-size: var(--fs-xs);
+  color: var(--fg-2);
+  font-family: var(--ff-mono);
+}
+.stat-delta .up { color: var(--ok); }
+.stat-delta .down { color: var(--sev-high); }
+
+.bar-row {
+  display: grid;
+  grid-template-columns: 110px 1fr 48px;
+  gap: 10px;
+  align-items: center;
+  padding: 4px 0;
+  font-size: var(--fs-xs);
+}
+.bar-row .br-l {
+  color: var(--fg-1);
+  font-family: var(--ff-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bar-row .br-track {
+  height: 4px;
+  background: var(--bg-3);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.bar-row .br-fill {
+  height: 100%;
+  background: var(--silk-dim);
+  border-radius: 2px;
+  transition: width var(--t-fast);
+}
+.bar-row .br-n {
+  text-align: right;
+  font-family: var(--ff-mono);
+  color: var(--silk);
+  font-variant-numeric: tabular-nums;
+}
+
+.target-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  border-bottom: 1px solid var(--line-0);
+}
+.target-row:last-child { border-bottom: 0; }
+.target-row .tr-host {
+  font-family: var(--ff-mono);
+  color: var(--fg-0);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.target-row .tr-meta {
+  font-family: var(--ff-mono);
+  font-size: var(--fs-xs);
+  color: var(--fg-2);
+}
+.tree-host-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* Severity chip (tiny) */
+.sev-chip {
+  display: inline-block;
+  padding: 1px 6px;
+  font-family: var(--ff-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  border-radius: 3px;
+  font-weight: 600;
+}
+.sev-chip.crit { color: var(--sev-crit); background: color-mix(in oklch, var(--sev-crit) 18%, transparent); }
+.sev-chip.high { color: var(--sev-high); background: color-mix(in oklch, var(--sev-high) 18%, transparent); }
+.sev-chip.med  { color: var(--sev-med);  background: color-mix(in oklch, var(--sev-med)  18%, transparent); }
+.sev-chip.low  { color: var(--sev-low);  background: color-mix(in oklch, var(--sev-low)  18%, transparent); }
+.sev-chip.info { color: var(--sev-info); background: color-mix(in oklch, var(--sev-info) 18%, transparent); }
+
+/* ============ INTEL ============ */
+.intel {
+  overflow-y: auto;
+  padding: var(--sp-6);
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: var(--sp-4);
+  align-content: start;
+}
+.intel .col-3  { grid-column: span 3; }
+.intel .col-4  { grid-column: span 4; }
+.intel .col-6  { grid-column: span 6; }
+.intel .col-8  { grid-column: span 8; }
+.intel .col-12 { grid-column: span 12; }
+
+.intel .spark {
+  width: 100%;
+  height: 40px;
+  display: block;
+  margin-top: 12px;
+}
+
+.intel-path-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--bg-2);
+  border-radius: var(--r-md);
+  border: 1px solid var(--line-0);
+  font-size: var(--fs-xs);
+  font-family: var(--ff-mono);
+}
+.intel-path-row .ip-from { color: var(--fg-0); }
+.intel-path-row .ip-arrow { color: var(--fg-3); }
+.intel-path-row .ip-to { color: var(--silk); }
+
+.intel-empty {
+  color: var(--fg-3);
+  font-size: var(--fs-xs);
+  font-family: var(--ff-mono);
+  padding: var(--sp-2) 0;
+}
+
+@media (max-width: 1100px) {
+  .intel .col-3, .intel .col-4 { grid-column: span 6; }
+  .intel .col-6, .intel .col-8 { grid-column: span 12; }
+}
