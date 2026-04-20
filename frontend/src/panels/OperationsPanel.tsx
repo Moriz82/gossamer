@@ -1,667 +1,1396 @@
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import {
+  ChangeEvent,
+  DragEvent,
+  FormEvent,
+  ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { apiFetch, apiJson } from "../api";
+import "../styles/screens.css";
 
-type LogEntry = { ts: string; phase: string; msg: string; level: "info" | "warn" | "error" | "success" };
-type CrawlProgress = {
-  type: string; visited?: number; queue_size?: number; max_pages?: number;
-  depth?: number; max_depth?: number; current_url?: string;
-  nodes?: number; edges?: number; detail?: string; scanner?: string; phase?: string;
+/* ========================================================================
+   Types
+   ======================================================================== */
+type RunKind = "crawl" | "audit" | "fuzz" | "scan" | "import";
+type OpsTab = "crawl" | "fuzz" | "scan" | "import";
+type RunStatus = "idle" | "running" | "paused" | "done" | "error";
+type LogLevel = "info" | "warn" | "error" | "success";
+
+type LogEntry = {
+  id: number;
+  ts: string;
+  phase: string;
+  msg: string;
+  level: LogLevel;
+  run: RunKind;
 };
-type PresetInfo = { name: string; description: string; audit: boolean; scanner_summary: string };
-type Wordlist = { path: string; name: string; relative: string; category: string; lines: number; size_bytes: number };
 
-const WEB_SCANNERS = [
-  { id: "nuclei", label: "Nuclei", desc: "Template-based vulnerability scanner" },
+type RunState = {
+  id: RunKind;
+  title: string;
+  status: RunStatus;
+  visited: number;
+  total: number;
+  pct: number;
+  meta: Array<[string | number, string]>;
+};
+
+type Plugin = {
+  id: string;
+  type?: string;
+  name: string;
+  description?: string;
+  installed?: boolean;
+  binary?: string | null;
+};
+
+type ScanPreset = {
+  name: string;
+  description: string;
+  audit?: boolean;
+  scanner_summary?: string;
+};
+
+type Wordlist = {
+  path: string;
+  name: string;
+  relative: string;
+  category: string;
+  lines: number;
+  size_bytes: number;
+};
+
+type GraphStats = { total_nodes: number; total_edges: number };
+
+const RUN_KINDS: RunKind[] = ["crawl", "audit", "fuzz", "scan", "import"];
+
+const FALLBACK_SCANNERS: Plugin[] = [
+  { id: "nuclei", name: "Nuclei", description: "Template-based vuln scanner", type: "web" },
+  { id: "trivy", name: "Trivy", description: "Container/FS scan", type: "local" },
+  { id: "gitleaks", name: "Gitleaks", description: "Secret leaks", type: "local" },
+  { id: "semgrep", name: "Semgrep", description: "SAST", type: "local" },
+  { id: "grype", name: "Grype", description: "SCA vuln scanner", type: "local" },
 ];
-const LOCAL_SCANNERS = [
-  { id: "trivy", label: "Trivy", desc: "Container/filesystem vulnerability scanner" },
-  { id: "gitleaks", label: "Gitleaks", desc: "Git secret scanning" },
-  { id: "grype", label: "Grype", desc: "SCA vulnerability scanner" },
-  { id: "semgrep", label: "Semgrep", desc: "Static analysis (SAST)" },
-];
 
-function ts() { return new Date().toLocaleTimeString(); }
+const SEVERITIES = ["info", "low", "med", "high", "crit"] as const;
 
-/* ═══════════════════════════════════════════════════════════════════
-   Main OperationsPanel — three tabs: Crawl, Fuzz, Scan
-   ═══════════════════════════════════════════════════════════════════ */
+/* ========================================================================
+   Inline icons (stroked 24x24, follows currentColor)
+   ======================================================================== */
+type IconProps = { size?: number };
+const svg = (p: IconProps, children: ReactNode) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={1.5}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    width={p.size ?? 14}
+    height={p.size ?? 14}
+  >
+    {children}
+  </svg>
+);
+const Icon = {
+  threads: (p: IconProps = {}) => svg(p, <>
+    <circle cx="12" cy="12" r="3" />
+    <path d="M12 3v6M12 15v6M3 12h6M15 12h6M5.6 5.6l4.2 4.2M14.2 14.2l4.2 4.2M5.6 18.4l4.2-4.2M14.2 9.8l4.2-4.2" />
+  </>),
+  target: (p: IconProps = {}) => svg(p, <>
+    <circle cx="12" cy="12" r="9" />
+    <circle cx="12" cy="12" r="5" />
+    <circle cx="12" cy="12" r="1.5" fill="currentColor" />
+  </>),
+  scan: (p: IconProps = {}) => svg(p, <>
+    <path d="M4 4h4M20 4h-4M4 20h4M20 20h-4M4 4v4M20 4v4M4 20v-4M20 20v-4" />
+    <circle cx="12" cy="12" r="4" />
+    <path d="M12 8v8" />
+  </>),
+  upload: (p: IconProps = {}) => svg(p, <>
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" />
+  </>),
+  play: (p: IconProps = {}) => svg(p, <path d="M6 4l14 8-14 8V4z" fill="currentColor" />),
+  pause: (p: IconProps = {}) => svg(p, <>
+    <rect x="6" y="5" width="4" height="14" fill="currentColor" />
+    <rect x="14" y="5" width="4" height="14" fill="currentColor" />
+  </>),
+  stop: (p: IconProps = {}) => svg(p, <rect x="6" y="6" width="12" height="12" rx="1" fill="currentColor" />),
+  save: (p: IconProps = {}) => svg(p, <>
+    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+    <path d="M17 21v-8H7v8M7 3v5h8" />
+  </>),
+  close: (p: IconProps = {}) => svg(p, <path d="M6 6l12 12M18 6L6 18" />),
+  terminal: (p: IconProps = {}) => svg(p, <>
+    <path d="m5 8 4 4-4 4M11 16h8" />
+    <rect x="2" y="4" width="20" height="16" rx="2" />
+  </>),
+};
+
+/* ========================================================================
+   Helpers
+   ======================================================================== */
+function nowTs(): string {
+  return new Date().toLocaleTimeString();
+}
+
+async function readSse(
+  response: Response,
+  onEvent: (evt: Record<string, unknown>) => void,
+  signal?: AbortSignal,
+) {
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("No response body");
+  const decoder = new TextDecoder();
+  let buf = "";
+  while (true) {
+    if (signal?.aborted) return;
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const parts = buf.split("\n\n");
+    buf = parts.pop() || "";
+    for (const part of parts) {
+      const line = part.replace(/^data: /, "").trim();
+      if (!line) continue;
+      try {
+        onEvent(JSON.parse(line));
+      } catch {
+        /* ignore malformed */
+      }
+    }
+  }
+}
+
+function stripAnsi(s: string): string {
+  // eslint-disable-next-line no-control-regex
+  return s.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
+function ansiLevel(s: string): LogLevel {
+  // eslint-disable-next-line no-control-regex
+  if (s.includes("\x1b[32m")) return "success";
+  // eslint-disable-next-line no-control-regex
+  if (s.includes("\x1b[31m")) return "error";
+  // eslint-disable-next-line no-control-regex
+  if (s.includes("\x1b[33m")) return "warn";
+  return "info";
+}
+
+/* ========================================================================
+   Main panel
+   ======================================================================== */
 export default function OperationsPanel() {
-  const [activeTab, setActiveTab] = useState<"crawl" | "fuzz" | "scan">("crawl");
+  const [tab, setTab] = useState<OpsTab>("crawl");
+  const [selectedRun, setSelectedRun] = useState<RunKind | "all">("all");
+  const [termOpen, setTermOpen] = useState(true);
+
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const logIdRef = useRef(0);
+  const logEndRef = useRef<HTMLDivElement>(null);
+
+  const appendLog = useCallback(
+    (run: RunKind, phase: string, msg: string, level: LogLevel = "info") => {
+      const id = ++logIdRef.current;
+      setLogs((prev) => {
+        const next = prev.concat({ id, ts: nowTs(), phase, msg, level, run });
+        return next.length > 2000 ? next.slice(-1500) : next;
+      });
+      setTimeout(() => logEndRef.current?.scrollIntoView({ behavior: "smooth" }), 20);
+    },
+    [],
+  );
+
+  const clearLogs = useCallback(() => setLogs([]), []);
+
+  // Run states (one per run kind)
+  const [runs, setRuns] = useState<Record<RunKind, RunState>>(() => ({
+    crawl: { id: "crawl", title: "Crawl", status: "idle", visited: 0, total: 0, pct: 0, meta: [] },
+    audit: { id: "audit", title: "Audit", status: "idle", visited: 0, total: 0, pct: 0, meta: [] },
+    fuzz: { id: "fuzz", title: "Fuzz", status: "idle", visited: 0, total: 0, pct: 0, meta: [] },
+    scan: { id: "scan", title: "Scan", status: "idle", visited: 0, total: 0, pct: 0, meta: [] },
+    import: { id: "import", title: "Import", status: "idle", visited: 0, total: 0, pct: 0, meta: [] },
+  }));
+  const updateRun = useCallback((id: RunKind, patch: Partial<RunState>) => {
+    setRuns((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
+  }, []);
+
+  // Graph stats (polled while any run is active)
+  const [stats, setStats] = useState<GraphStats | null>(null);
+  const [statsBaseline, setStatsBaseline] = useState<GraphStats | null>(null);
+  const [findingsCount, setFindingsCount] = useState<number>(0);
+  const [requestsCount, setRequestsCount] = useState<number>(0);
+
+  const anyRunning = Object.values(runs).some((r) => r.status === "running");
+
+  useEffect(() => {
+    let cancelled = false;
+    const poll = () => {
+      apiJson<GraphStats>("/api/graph/stats")
+        .then((s) => {
+          if (cancelled) return;
+          setStats(s);
+          setStatsBaseline((prev) => prev ?? s);
+        })
+        .catch(() => {});
+      apiJson<{ findings: unknown[] }>("/api/findings")
+        .then((f) => {
+          if (cancelled) return;
+          setFindingsCount(Array.isArray(f.findings) ? f.findings.length : 0);
+        })
+        .catch(() => {});
+    };
+    poll();
+    if (!anyRunning) return () => { cancelled = true; };
+    const i = setInterval(poll, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(i);
+    };
+  }, [anyRunning]);
+
+  // Seed a baseline when any run starts
+  const prevRunningRef = useRef(false);
+  useEffect(() => {
+    if (anyRunning && !prevRunningRef.current) {
+      setStatsBaseline(stats);
+      setRequestsCount(0);
+    }
+    prevRunningRef.current = anyRunning;
+  }, [anyRunning, stats]);
+
+  const runList = useMemo(
+    () => RUN_KINDS.map((k) => runs[k]).filter((r) => r.status !== "idle"),
+    [runs],
+  );
+
+  const filteredLogs = useMemo(
+    () => (selectedRun === "all" ? logs : logs.filter((l) => l.run === selectedRun)),
+    [logs, selectedRun],
+  );
+
+  const sessionNodesDelta =
+    stats && statsBaseline ? Math.max(0, stats.total_nodes - statsBaseline.total_nodes) : 0;
+  const sessionEdgesDelta =
+    stats && statsBaseline ? Math.max(0, stats.total_edges - statsBaseline.total_edges) : 0;
 
   return (
-    <div className="ops-panel">
-      <div className="ops-tabs">
-        {(["crawl", "fuzz", "scan"] as const).map(t => (
-          <button key={t} className={`ops-tab ${activeTab === t ? "ops-tab-active" : ""}`}
-            onClick={() => setActiveTab(t)}>{t.charAt(0).toUpperCase() + t.slice(1)}</button>
-        ))}
+    <div className={`ops ${!termOpen ? "term-hidden" : ""}`}>
+      <div className="ops-top">
+        <div className="ops-panel">
+          <div className="ops-tabs">
+            {([
+              ["crawl", "Crawl", <Icon.threads size={13} key="i" />],
+              ["fuzz", "Fuzz", <Icon.target size={13} key="i" />],
+              ["scan", "Scan", <Icon.scan size={13} key="i" />],
+              ["import", "Import", <Icon.upload size={13} key="i" />],
+            ] as Array<[OpsTab, string, ReactNode]>).map(([id, label, icon]) => (
+              <button
+                key={id}
+                type="button"
+                className={`ops-tab ${tab === id ? "on" : ""}`}
+                onClick={() => setTab(id)}
+              >
+                {icon} {label}
+              </button>
+            ))}
+          </div>
+
+          {tab === "crawl" && (
+            <CrawlTab
+              appendLog={appendLog}
+              updateRun={updateRun}
+              setRequests={setRequestsCount}
+            />
+          )}
+          {tab === "fuzz" && (
+            <FuzzTab
+              appendLog={appendLog}
+              updateRun={updateRun}
+              setRequests={setRequestsCount}
+            />
+          )}
+          {tab === "scan" && (
+            <ScanTab
+              appendLog={appendLog}
+              updateRun={updateRun}
+            />
+          )}
+          {tab === "import" && (
+            <ImportTab appendLog={appendLog} updateRun={updateRun} />
+          )}
+        </div>
+
+        {/* Right: live runs + session counters */}
+        <div className="ops-panel right">
+          <div className="right-head">Live runs</div>
+          <div className="progress-stack">
+            {runList.length === 0 ? (
+              <div style={{
+                padding: "16px",
+                color: "var(--fg-3)",
+                fontSize: "var(--fs-xs)",
+                textAlign: "center",
+                border: "1px dashed var(--line-0)",
+                borderRadius: "var(--r-md)",
+              }}>
+                No active runs. Start a crawl, fuzz, scan, or import to see progress here.
+              </div>
+            ) : runList.map((r) => (
+              <div
+                key={r.id}
+                className={`progress-card ${selectedRun === r.id ? "sel" : ""} ${r.status === "paused" ? "paused" : ""}`}
+                onClick={() => setSelectedRun(r.id)}
+              >
+                <div className="progress-head">
+                  <span className="pg-title">
+                    {r.status === "paused" ? (
+                      <Icon.pause size={11} />
+                    ) : r.status === "running" ? (
+                      <span className="pulse" />
+                    ) : (
+                      <span className="pulse" style={{ background: "var(--fg-3)", animation: "none" }} />
+                    )}
+                    {r.title}
+                    {r.status !== "running" && (
+                      <span style={{
+                        color: "var(--fg-3)",
+                        marginLeft: 4,
+                        fontSize: 10,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.06em",
+                      }}>{r.status}</span>
+                    )}
+                  </span>
+                  <span className="pg-pct">{Math.round(r.pct)}%</span>
+                </div>
+                <div className="progress-bar">
+                  <div
+                    className="progress-fill"
+                    style={{
+                      width: `${Math.min(100, r.pct)}%`,
+                      background: r.status === "paused" || r.status === "error" ? "var(--fg-3)" : undefined,
+                    }}
+                  />
+                </div>
+                <div className="progress-meta">
+                  {r.meta.map(([v, l], i) => (
+                    <span key={i}><strong>{typeof v === "number" ? v.toLocaleString() : v}</strong>{l}</span>
+                  ))}
+                </div>
+                <div className="progress-viewlog">
+                  {selectedRun === r.id ? "▸ showing in console" : "click to view in console →"}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="session-head">This session</div>
+          <div className="session-grid">
+            <div className="session-cell">
+              <div className="cell-label">Nodes added</div>
+              <div className="cell-value">{sessionNodesDelta.toLocaleString()}</div>
+            </div>
+            <div className="session-cell">
+              <div className="cell-label">Edges added</div>
+              <div className="cell-value">{sessionEdgesDelta.toLocaleString()}</div>
+            </div>
+            <div className="session-cell">
+              <div className="cell-label">Findings</div>
+              <div className="cell-value">{findingsCount.toLocaleString()}</div>
+            </div>
+            <div className="session-cell">
+              <div className="cell-label">Requests</div>
+              <div className="cell-value">{requestsCount.toLocaleString()}</div>
+            </div>
+          </div>
+        </div>
       </div>
-      <div className="ops-tab-body">
-        {activeTab === "crawl" && <CrawlTab />}
-        {activeTab === "fuzz" && <FuzzTab />}
-        {activeTab === "scan" && <ScanTab />}
-      </div>
+
+      {termOpen ? (
+        <div className="log">
+          <div className="log-head">
+            <span className="dot" />
+            <span>Console</span>
+            <span style={{ color: "var(--fg-3)" }}>·</span>
+            <span className="mono" style={{ color: "var(--silk)" }}>
+              {selectedRun === "all" ? "all runs" : runs[selectedRun as RunKind]?.title || selectedRun}
+            </span>
+            <span style={{ color: "var(--fg-3)" }}>·</span>
+            <span>{filteredLogs.length} events</span>
+            <div style={{ flex: 1 }} />
+            <button
+              type="button"
+              className={`btn ghost ${selectedRun === "all" ? "on" : ""}`}
+              style={{ fontSize: 10 }}
+              onClick={() => setSelectedRun("all")}
+            >ALL</button>
+            {(["crawl", "audit", "fuzz"] as const).map((k) => (
+              <button
+                key={k}
+                type="button"
+                className={`btn ghost ${selectedRun === k ? "on" : ""}`}
+                style={{ fontSize: 10 }}
+                onClick={() => setSelectedRun(k)}
+              >{k.toUpperCase()}</button>
+            ))}
+            <button
+              type="button"
+              className="btn ghost"
+              style={{ fontSize: 10 }}
+              onClick={clearLogs}
+              title="Clear log"
+            >CLEAR</button>
+            <button
+              type="button"
+              className="btn ghost"
+              style={{ fontSize: 10 }}
+              onClick={() => setTermOpen(false)}
+              title="Hide terminal"
+            >
+              <Icon.close size={11} />
+            </button>
+          </div>
+          <div className="log-body">
+            {filteredLogs.length === 0 ? (
+              <div className="log-empty">— no output for this run —</div>
+            ) : filteredLogs.map((l) => (
+              <div key={l.id} className={`log-line ${l.level}`}>
+                <span className="lt">{l.ts}</span>
+                <span className="lp">[{l.phase}]</span>
+                <span className="lm">{stripAnsi(l.msg)}</span>
+              </div>
+            ))}
+            <div ref={logEndRef} />
+          </div>
+        </div>
+      ) : (
+        <button type="button" className="term-toggle" onClick={() => setTermOpen(true)}>
+          <Icon.terminal size={12} />
+          <span>Show terminal</span>
+          <span className="spacer" />
+          <span className="meta">{logs.length} events · live</span>
+        </button>
+      )}
     </div>
   );
 }
 
-/* ═══════════════════════════════════════════════════════════════════
-   Crawl Tab — seeds, depth, pages, scope, audit, activity log
-   ═══════════════════════════════════════════════════════════════════ */
-function CrawlTab() {
-  const [crawlSeeds, setCrawlSeeds] = useState("");
-  const [crawlSource, setCrawlSource] = useState("crawl");
+/* ========================================================================
+   Crawl tab
+   ======================================================================== */
+type TabProps = {
+  appendLog: (run: RunKind, phase: string, msg: string, level?: LogLevel) => void;
+  updateRun: (id: RunKind, patch: Partial<RunState>) => void;
+  setRequests?: (n: number | ((prev: number) => number)) => void;
+};
+
+function CrawlTab({ appendLog, updateRun, setRequests }: TabProps) {
+  const [seeds, setSeeds] = useState("");
+  const [sourceLabel, setSourceLabel] = useState("crawl");
   const [maxDepth, setMaxDepth] = useState("3");
-  const [maxPages, setMaxPages] = useState("100");
-  const [scopeHosts, setScopeHosts] = useState("");
+  const [maxPages, setMaxPages] = useState("500");
+  const [scope, setScope] = useState("");
   const [audit, setAudit] = useState(true);
+  const [follow, setFollow] = useState(true);
+  const [jsRender, setJsRender] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [crawlProgress, setCrawlProgress] = useState<CrawlProgress | null>(null);
-  const [logs, setLogs] = useState<LogEntry[]>([]);
-  const logEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  const log = useCallback((phase: string, msg: string, level: LogEntry["level"] = "info") => {
-    setLogs(prev => [...prev, { ts: ts(), phase, msg, level }]);
-    setTimeout(() => logEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
-  }, []);
-
-  // Import helpers
-  const [ingestorNames, setIngestorNames] = useState<string[]>([]);
-  const [path, setPath] = useState("");
-  const [sourceLabel, setSourceLabel] = useState("import");
-  const [hint, setHint] = useState("");
-  useEffect(() => { apiJson<{ name: string }[]>("/api/ingestors").then(r => setIngestorNames(r.map(x => x.name))).catch(() => {}); }, []);
-
-  async function onUpload(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const input = (e.currentTarget.elements.namedItem("file") as HTMLInputElement);
-    const file = input.files?.[0]; if (!file) return;
-    setBusy(true); log("ingest", `Uploading ${file.name}...`);
-    const fd = new FormData(); fd.append("file", file);
-    const q = new URLSearchParams({ source_label: sourceLabel }); if (hint) q.set("ingestor_hint", hint);
-    try {
-      const r = await apiFetch(`/api/ingest?${q}`, { method: "POST", body: fd });
-      const j = await r.json(); if (!r.ok) throw new Error(j.detail || JSON.stringify(j));
-      log("ingest", `Ingested: ${j.nodes} nodes, ${j.edges} edges`, "success"); input.value = "";
-    } catch (err) { log("ingest", String(err), "error"); } finally { setBusy(false); }
-  }
-  async function ingestByPath() {
-    setBusy(true); log("ingest", `Ingesting ${path}...`);
-    try {
-      const j = await apiJson<any>("/api/ingest/path", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path, source_label: sourceLabel, ingestor_hint: hint || null }),
-      });
-      log("ingest", `Done: ${j.nodes} nodes, ${j.edges} edges`, "success");
-    } catch (err) { log("ingest", String(err), "error"); } finally { setBusy(false); }
-  }
-
   async function runCrawl() {
-    if (!crawlSeeds) return;
-    setBusy(true); setCrawlProgress(null); log("crawl", `Starting crawl of ${crawlSeeds}`);
-    const reqBody: Record<string, unknown> = {
-      seeds_file: crawlSeeds, source_label: crawlSource,
-      crawl_mode: audit ? "crawl_audit" : "crawl_only",
-      modules: [], // no fuzz/scan modules — crawl only
-    };
-    if (maxDepth) reqBody.max_depth = Number(maxDepth);
-    if (maxPages) reqBody.max_pages = Number(maxPages);
-    const lines = scopeHosts.split("\n").map(s => s.trim()).filter(Boolean);
-    if (lines.length) reqBody.scope_hosts = lines;
+    if (!seeds.trim()) return;
+    const seedLines = seeds.split("\n").map((s) => s.trim()).filter(Boolean);
+    setBusy(true);
+    appendLog("crawl", "crawl", `Starting crawl (${seedLines.length} seeds)`);
+    updateRun("crawl", {
+      title: "Crawl · " + (seedLines[0] ?? "seeds"),
+      status: "running",
+      visited: 0,
+      total: Number(maxPages) || 100,
+      pct: 0,
+      meta: [[0, `/${maxPages} visited`], [0, " in queue"]],
+    });
+    if (audit) {
+      updateRun("audit", {
+        title: "Audit · passive",
+        status: "running",
+        visited: 0,
+        total: 0,
+        pct: 0,
+        meta: [["passive", " headers/CORS/paths"]],
+      });
+    }
 
-    const ac = new AbortController(); abortRef.current = ac;
+    const body: Record<string, unknown> = {
+      seeds_file: seeds,
+      source_label: sourceLabel,
+      crawl_mode: audit ? "crawl_audit" : "crawl_only",
+      modules: [],
+    };
+    if (maxDepth) body.max_depth = Number(maxDepth);
+    if (maxPages) body.max_pages = Number(maxPages);
+    const scopeHosts = scope.split(/[,\n]/).map((s) => s.trim()).filter(Boolean);
+    if (scopeHosts.length) body.scope_hosts = scopeHosts;
+    if (jsRender) body.render_js = true;
+    if (!follow) body.follow_redirects = false;
+
+    const ac = new AbortController();
+    abortRef.current = ac;
     try {
       const r = await apiFetch("/api/ingest/crawl/stream", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(reqBody), signal: ac.signal,
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: ac.signal,
       });
-      if (!r.ok) throw new Error(await r.text() || r.statusText);
-      const reader = r.body?.getReader(); if (!reader) throw new Error("No response body");
-      const decoder = new TextDecoder(); let buf = "";
-      while (true) {
-        const { done, value } = await reader.read(); if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const parts = buf.split("\n\n"); buf = parts.pop() || "";
-        for (const part of parts) {
-          const line = part.replace(/^data: /, "").trim(); if (!line) continue;
-          try {
-            const evt = JSON.parse(line) as any;
-            if (evt.type === "progress") {
-              setCrawlProgress(evt);
-              if (evt.current_url) log("crawl", `[${evt.visited}/${evt.max_pages}] ${evt.current_url}`);
-            } else if (evt.type === "crawl_complete") {
-              setCrawlProgress(null);
-              log("crawl", `Crawl complete: ${evt.nodes} nodes, ${evt.edges} edges`, "success");
-            } else if (evt.type === "complete") {
-              setCrawlProgress(null);
-              log("crawl", `Done: ${evt.nodes} nodes, ${evt.edges} edges`, "success");
-            } else if (evt.type === "error") {
-              setCrawlProgress(null); log("crawl", `Error: ${evt.detail}`, "error");
-            }
-          } catch { /* skip */ }
+      if (!r.ok) throw new Error((await r.text()) || r.statusText);
+      await readSse(r, (evt) => {
+        const t = evt.type as string | undefined;
+        if (t === "progress") {
+          const visited = Number(evt.visited ?? 0);
+          const maxP = Number(evt.max_pages ?? maxPages ?? 100);
+          const queue = Number(evt.queue_size ?? 0);
+          const depth = Number(evt.depth ?? 0);
+          const maxD = Number(evt.max_depth ?? maxDepth ?? 0);
+          const pct = maxP > 0 ? (visited / maxP) * 100 : 0;
+          updateRun("crawl", {
+            visited,
+            total: maxP,
+            pct,
+            status: "running",
+            meta: [
+              [visited, `/${maxP} visited`],
+              [queue, " in queue"],
+              [`depth ${depth}`, `/${maxD}`],
+            ],
+          });
+          if (evt.current_url) {
+            appendLog("crawl", "crawl", `[${visited}/${maxP}] ${evt.current_url}`);
+            setRequests?.((n) => n + 1);
+          }
+        } else if (t === "crawl_complete") {
+          appendLog("crawl", "crawl", `Crawl complete: ${evt.nodes} nodes, ${evt.edges} edges`, "success");
+        } else if (t === "scan_progress") {
+          const scanner = String(evt.scanner ?? "audit");
+          const phase = String(evt.phase ?? "");
+          const detail = String(evt.detail ?? "");
+          if (phase === "error") appendLog("audit", scanner, detail, "error");
+          else if (phase === "complete") appendLog("audit", scanner, `done`, "success");
+          else if (detail) appendLog("audit", scanner, detail);
+        } else if (t === "phase_start" && evt.phase === "scanning") {
+          appendLog("audit", "audit", `Scanning ${evt.targets ?? 0} targets`);
+        } else if (t === "phase_complete") {
+          if (audit) updateRun("audit", { status: "done", pct: 100 });
+        } else if (t === "complete") {
+          appendLog("crawl", "crawl", `Done: ${evt.nodes} nodes, ${evt.edges} edges`, "success");
+          updateRun("crawl", { status: "done", pct: 100 });
+          if (audit) updateRun("audit", { status: "done", pct: 100 });
+        } else if (t === "error") {
+          appendLog("crawl", "crawl", `Error: ${evt.detail}`, "error");
+          updateRun("crawl", { status: "error" });
         }
-      }
+      }, ac.signal);
     } catch (err) {
-      if ((err as Error).name !== "AbortError") log("crawl", String(err), "error");
-      setCrawlProgress(null);
-    } finally { setBusy(false); abortRef.current = null; }
+      if ((err as Error).name !== "AbortError") {
+        appendLog("crawl", "crawl", String(err), "error");
+        updateRun("crawl", { status: "error" });
+      }
+    } finally {
+      setBusy(false);
+      abortRef.current = null;
+    }
+  }
+
+  function stopCrawl() {
+    abortRef.current?.abort();
+    updateRun("crawl", { status: "paused" });
+    appendLog("crawl", "crawl", "Stopped", "warn");
   }
 
   async function clearGraph() {
     if (!confirm("Clear all nodes and edges?")) return;
-    setBusy(true); log("system", "Clearing graph...");
-    try { await apiJson("/api/graph", { method: "DELETE" }); log("system", "Graph cleared", "success"); }
-    catch (err) { log("system", String(err), "error"); } finally { setBusy(false); }
+    appendLog("crawl", "system", "Clearing graph...");
+    try {
+      await apiJson("/api/graph", { method: "DELETE" });
+      appendLog("crawl", "system", "Graph cleared", "success");
+    } catch (err) {
+      appendLog("crawl", "system", String(err), "error");
+    }
   }
 
   return (
-    <div className="ops-crawl-layout">
-      <div className="ops-config">
-        <datalist id="ingestor-hints">{ingestorNames.map(n => <option key={n} value={n} />)}</datalist>
-        <details className="ops-section">
-          <summary className="ops-section-head">Import</summary>
-          <form className="form-grid" onSubmit={onUpload}>
-            <label>File <input name="file" type="file" /></label>
-            <label>Label <input value={sourceLabel} onChange={e => setSourceLabel(e.target.value)} /></label>
-            <label>Hint <input value={hint} onChange={e => setHint(e.target.value)} list="ingestor-hints" placeholder="auto" /></label>
-            <div className="form-actions"><button type="submit" disabled={busy}>Upload</button></div>
-          </form>
-          <div className="form-grid" style={{marginTop: 8}}>
-            <label className="full">Path <input value={path} onChange={e => setPath(e.target.value)} placeholder="/path/to/output.jsonl" /></label>
-            <div className="form-actions"><button type="button" onClick={() => void ingestByPath()} disabled={busy || !path}>Ingest</button></div>
-          </div>
-        </details>
-
-        <div className="ops-section ops-section-open">
-          <div className="ops-section-head">Crawl</div>
-          <div className="form-grid">
-            <label className="full">Seeds file <input value={crawlSeeds} onChange={e => setCrawlSeeds(e.target.value)} placeholder="/path/to/seeds.urlseed" /></label>
-            <label>Label <input value={crawlSource} onChange={e => setCrawlSource(e.target.value)} /></label>
-            <label>Depth <input value={maxDepth} onChange={e => setMaxDepth(e.target.value)} /></label>
-            <label>Max pages <input value={maxPages} onChange={e => setMaxPages(e.target.value)} /></label>
-          </div>
-          <label className="ops-skip-crawl">
-            <input type="checkbox" checked={audit} onChange={e => setAudit(e.target.checked)} />
-            <span>Passive audit (headers, CORS, sensitive paths)</span>
-          </label>
-          <details>
-            <summary style={{cursor: "pointer", fontSize: "0.82rem", padding: "6px 0"}}>Scope hosts</summary>
-            <textarea value={scopeHosts} onChange={e => setScopeHosts(e.target.value)} rows={2} placeholder="one host per line (optional)" style={{width: "100%"}} />
-          </details>
-          <div className="ops-pipeline-actions">
-            <button type="button" className="primary" onClick={() => void runCrawl()} disabled={busy || !crawlSeeds}>
-              {busy ? "Crawling..." : "Run Crawl"}
-            </button>
-            {busy && <button type="button" className="danger" onClick={() => abortRef.current?.abort()}>Cancel</button>}
-          </div>
-          {crawlProgress && (
-            <div className="crawl-progress">
-              <div className="crawl-progress-bar-bg"><div className="crawl-progress-bar" style={{ width: `${Math.min(100, ((crawlProgress.visited || 0) / (crawlProgress.max_pages || 100)) * 100)}%` }} /></div>
-              <div className="crawl-progress-stats">
-                <span>{crawlProgress.visited}/{crawlProgress.max_pages} pages</span>
-                <span>depth {crawlProgress.depth}/{crawlProgress.max_depth}</span>
-                <span>{crawlProgress.nodes} nodes</span>
-              </div>
-            </div>
-          )}
-        </div>
-
-        <details className="ops-section">
-          <summary className="ops-section-head ops-danger">Danger Zone</summary>
-          <button type="button" className="danger" onClick={() => void clearGraph()} disabled={busy} style={{marginTop: 8}}>Clear graph</button>
-        </details>
+    <>
+      <div className="field">
+        <label>Seeds <span style={{ color: "var(--fg-3)" }}>one per line, or path to seeds file</span></label>
+        <textarea
+          className="input mono"
+          value={seeds}
+          onChange={(e) => setSeeds(e.target.value)}
+          placeholder={"https://example.com\nhttps://api.example.com"}
+        />
       </div>
 
-      <div className="ops-log">
-        <div className="ops-log-header"><span>Activity Log</span><button type="button" className="ghost" onClick={() => setLogs([])}>Clear</button></div>
-        <div className="ops-log-body">
-          {logs.length === 0 && <div className="ops-log-empty">Run a crawl to see activity here</div>}
-          {logs.map((l, i) => (
-            <div key={i} className={`ops-log-entry ops-log-${l.level}`}>
-              <span className="ops-log-ts">{l.ts}</span><span className="ops-log-phase">{l.phase}</span><span className="ops-log-msg">{l.msg}</span>
-            </div>
-          ))}
-          <div ref={logEndRef} />
+      <div className="row-3">
+        <div className="field">
+          <label>Max depth</label>
+          <input className="input mono" value={maxDepth} onChange={(e) => setMaxDepth(e.target.value)} />
+        </div>
+        <div className="field">
+          <label>Max pages</label>
+          <input className="input mono" value={maxPages} onChange={(e) => setMaxPages(e.target.value)} />
+        </div>
+        <div className="field">
+          <label>Source label</label>
+          <input className="input mono" value={sourceLabel} onChange={(e) => setSourceLabel(e.target.value)} />
         </div>
       </div>
-    </div>
+
+      <div className="field">
+        <label>Scope (comma or newline, glob supported)</label>
+        <input
+          className="input mono"
+          value={scope}
+          onChange={(e) => setScope(e.target.value)}
+          placeholder="example.com, *.example.com"
+        />
+        <span className="hint">Only hosts matching the scope will be requested. Wildcards allowed.</span>
+      </div>
+
+      <div className="field">
+        <label>Options</label>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          <button type="button" className={`check ${audit ? "on" : ""}`} onClick={() => setAudit(!audit)}>
+            <span className="check-box" /> Passive audit
+          </button>
+          <button type="button" className={`check ${follow ? "on" : ""}`} onClick={() => setFollow(!follow)}>
+            <span className="check-box" /> Follow redirects
+          </button>
+          <button type="button" className={`check ${jsRender ? "on" : ""}`} onClick={() => setJsRender(!jsRender)}>
+            <span className="check-box" /> Render JS (headless)
+          </button>
+        </div>
+      </div>
+
+      <div className="actions-row">
+        <button
+          type="button"
+          className="btn primary"
+          onClick={() => void runCrawl()}
+          disabled={busy || !seeds.trim()}
+        >
+          {busy ? <><Icon.pause size={12} /> Running…</> : <><Icon.play size={12} /> Start crawl</>}
+        </button>
+        {busy && (
+          <button type="button" className="btn danger" onClick={stopCrawl}>
+            <Icon.stop size={12} /> Stop
+          </button>
+        )}
+        <button type="button" className="btn danger" onClick={() => void clearGraph()}>
+          Clear graph
+        </button>
+      </div>
+    </>
   );
 }
 
-
-/* ═══════════════════════════════════════════════════════════════════
-   Fuzz Tab — target, fuzzer, wordlist, filters, TTY terminal
-   ═══════════════════════════════════════════════════════════════════ */
-function FuzzTab() {
+/* ========================================================================
+   Fuzz tab
+   ======================================================================== */
+function FuzzTab({ appendLog, updateRun, setRequests }: TabProps) {
   const [target, setTarget] = useState("");
   const [hosts, setHosts] = useState<string[]>([]);
   const [fuzzer, setFuzzer] = useState<"ffuf" | "feroxbuster">("ffuf");
   const [wordlist, setWordlist] = useState("");
-  const [filters, setFilters] = useState<Record<string, string>>({});
+  const [extensions, setExtensions] = useState("");
+  const [threads, setThreads] = useState("40");
+  const [matchStatus, setMatchStatus] = useState("200,301,403");
+  const [filterSize, setFilterSize] = useState("");
   const [busy, setBusy] = useState(false);
-  const [ttyLines, setTtyLines] = useState<string[]>([]);
-  const ttyRef = useRef<HTMLPreElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    apiJson<{hosts: string[]}>("/api/graph/hosts").then(d => setHosts(d.hosts)).catch(() => {});
+    apiJson<{ hosts: string[] }>("/api/graph/hosts")
+      .then((d) => setHosts(d.hosts || []))
+      .catch(() => {});
   }, []);
 
-  function isProgressLine(s: string) {
-    return s.includes(":: Progress:") || (s.startsWith("::") && !s.includes("Method") && !s.includes("URL") && !s.includes("Wordlist"));
-  }
-
-  function appendTty(line: string) {
-    setTtyLines(prev => {
-      const last = prev.length > 0 ? prev[prev.length - 1] : "";
-      // TTY behavior: progress lines overwrite previous progress line
-      if (isProgressLine(line) && isProgressLine(last)) {
-        const next = [...prev];
-        next[next.length - 1] = line;
-        return next;
-      }
-      const next = [...prev, line];
-      return next.length > 2000 ? next.slice(-1500) : next;
-    });
-    setTimeout(() => { if (ttyRef.current) ttyRef.current.scrollTop = ttyRef.current.scrollHeight; }, 20);
+  function buildExtraArgs(): string[] {
+    const args: string[] = [];
+    if (fuzzer === "ffuf") {
+      if (extensions.trim()) args.push("-e", extensions.trim());
+      if (threads.trim()) args.push("-t", threads.trim());
+      if (matchStatus.trim()) args.push("-mc", matchStatus.trim());
+      if (filterSize.trim()) args.push("-fs", filterSize.trim());
+    } else {
+      if (extensions.trim()) args.push("-x", extensions.trim());
+      if (threads.trim()) args.push("-t", threads.trim());
+      if (matchStatus.trim()) args.push("-s", matchStatus.trim());
+      if (filterSize.trim()) args.push("-S", filterSize.trim());
+    }
+    return args;
   }
 
   async function runFuzz() {
-    if (!target) return;
-    setBusy(true); setTtyLines([]);
-    const extraArgs: string[] = [];
-    const mapping = fuzzer === "ffuf"
-      ? { fs: "-fs", fw: "-fw", fl: "-fl" } as const
-      : { fs: "-S", fw: "-W", fl: "-N" } as const;
-    for (const [key, flag] of Object.entries(mapping)) {
-      const val = filters[key]?.trim();
-      if (val) extraArgs.push(flag, val);
-    }
+    if (!target.trim()) return;
+    setBusy(true);
+    appendLog("fuzz", fuzzer, `Starting ${fuzzer} against ${target}`);
+    updateRun("fuzz", {
+      title: `${fuzzer} · ${target}`,
+      status: "running",
+      visited: 0,
+      total: 0,
+      pct: 0,
+      meta: [[0, " hits"]],
+    });
 
-    const reqBody = {
+    const body = {
       tool_id: fuzzer,
       targets: [target],
       wordlist: wordlist || null,
-      extra_args: extraArgs,
+      extra_args: buildExtraArgs(),
     };
-
-    const ac = new AbortController(); abortRef.current = ac;
+    const ac = new AbortController();
+    abortRef.current = ac;
+    let hits = 0;
     try {
       const r = await apiFetch("/api/tools/run", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(reqBody), signal: ac.signal,
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: ac.signal,
       });
-      if (!r.ok) throw new Error(await r.text() || r.statusText);
-      const reader = r.body?.getReader(); if (!reader) throw new Error("No response body");
-      const decoder = new TextDecoder(); let buf = "";
-      while (true) {
-        const { done, value } = await reader.read(); if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const parts = buf.split("\n\n"); buf = parts.pop() || "";
-        for (const part of parts) {
-          const line = part.replace(/^data: /, "").trim(); if (!line) continue;
-          try {
-            const evt = JSON.parse(line) as any;
-            if (evt.type === "progress" && evt.output) {
-              appendTty(evt.output);
-            } else if (evt.type === "progress" && evt.phase === "starting" && evt.command) {
-              appendTty(`$ ${evt.command}`);
-            } else if (evt.type === "complete") {
-              appendTty("");
-              if (evt.ingested) {
-                appendTty(`\x1b[32m✓ Ingested: ${evt.ingested.nodes} nodes, ${evt.ingested.edges} edges\x1b[0m`);
-              } else if (evt.error) {
-                appendTty(`\x1b[31m✗ ${evt.error}\x1b[0m`);
-              } else {
-                appendTty(`✓ Done (exit ${evt.exit_code ?? "?"}, ${evt.elapsed_seconds ?? "?"}s)`);
-              }
-            } else if (evt.type === "error") {
-              appendTty(`\x1b[31m✗ Error: ${evt.detail}\x1b[0m`);
+      if (!r.ok) throw new Error((await r.text()) || r.statusText);
+      await readSse(r, (evt) => {
+        const t = evt.type as string | undefined;
+        if (t === "progress" && evt.phase === "starting" && evt.command) {
+          appendLog("fuzz", fuzzer, `$ ${evt.command}`);
+        } else if (t === "progress" && evt.output) {
+          const raw = String(evt.output);
+          const clean = stripAnsi(raw);
+          const level = ansiLevel(raw);
+          appendLog("fuzz", fuzzer, clean, level);
+          if (clean.includes("[Status:")) {
+            hits += 1;
+            updateRun("fuzz", { meta: [[hits, " hits"]] });
+          }
+          const m = clean.match(/Progress:\s*\[(\d+)\/(\d+)\]/);
+          if (m) {
+            const done = Number(m[1]);
+            const total = Number(m[2]);
+            if (total > 0) {
+              updateRun("fuzz", {
+                visited: done,
+                total,
+                pct: (done / total) * 100,
+                meta: [[done, `/${total} entries`], [hits, " hits"]],
+              });
             }
-          } catch { /* skip */ }
+          }
+          setRequests?.((n) => n + 1);
+        } else if (t === "complete") {
+          if (evt.ingested && typeof evt.ingested === "object") {
+            const ing = evt.ingested as { nodes?: number; edges?: number };
+            appendLog("fuzz", fuzzer, `✓ Ingested: ${ing.nodes ?? 0} nodes, ${ing.edges ?? 0} edges`, "success");
+          } else if (evt.error) {
+            appendLog("fuzz", fuzzer, `✗ ${evt.error}`, "error");
+          } else {
+            appendLog("fuzz", fuzzer, `✓ Done (exit ${evt.exit_code ?? "?"}, ${evt.elapsed_seconds ?? "?"}s)`, "success");
+          }
+          updateRun("fuzz", { status: "done", pct: 100 });
+        } else if (t === "error") {
+          appendLog("fuzz", fuzzer, `Error: ${evt.detail}`, "error");
+          updateRun("fuzz", { status: "error" });
         }
-      }
+      }, ac.signal);
     } catch (err) {
-      if ((err as Error).name !== "AbortError") appendTty(`Error: ${err}`);
-    } finally { setBusy(false); abortRef.current = null; }
+      if ((err as Error).name !== "AbortError") {
+        appendLog("fuzz", fuzzer, String(err), "error");
+        updateRun("fuzz", { status: "error" });
+      }
+    } finally {
+      setBusy(false);
+      abortRef.current = null;
+    }
   }
 
-  const filterDefs = fuzzer === "ffuf"
-    ? [{ key: "fs", label: "Size", flag: "-fs", ph: "e.g. 11110" }, { key: "fw", label: "Words", flag: "-fw", ph: "e.g. 1328" }, { key: "fl", label: "Lines", flag: "-fl", ph: "e.g. 125" }]
-    : [{ key: "fs", label: "Size", flag: "-S", ph: "e.g. 11110" }, { key: "fw", label: "Words", flag: "-W", ph: "e.g. 1328" }, { key: "fl", label: "Lines", flag: "-N", ph: "e.g. 125" }];
+  function stopFuzz() {
+    abortRef.current?.abort();
+    updateRun("fuzz", { status: "paused" });
+    appendLog("fuzz", fuzzer, "Stopped", "warn");
+  }
 
   return (
-    <div className="ops-fuzz-layout">
-      <div className="ops-fuzz-config">
-        <div className="ops-fuzz-row">
-          <label className="ops-fuzz-field">
-            <span className="ops-fuzz-label">Target URL</span>
-            <div style={{display: "flex", gap: 4}}>
-              <input value={target} onChange={e => setTarget(e.target.value)} placeholder="http://example.com" style={{flex: 1}} />
-              {hosts.length > 0 && (
-                <select value="" onChange={e => { if (e.target.value) setTarget(e.target.value); }} style={{maxWidth: 140}}>
-                  <option value="">From graph...</option>
-                  {hosts.map(h => <option key={h} value={h}>{h}</option>)}
-                </select>
-              )}
-            </div>
-          </label>
+    <>
+      <div className="field">
+        <label>Target URL pattern</label>
+        <div style={{ display: "flex", gap: 6 }}>
+          <input
+            className="input mono"
+            value={target}
+            onChange={(e) => setTarget(e.target.value)}
+            placeholder="https://example.com/FUZZ"
+            style={{ flex: 1 }}
+          />
+          {hosts.length > 0 && (
+            <select
+              className="input mono"
+              value=""
+              onChange={(e) => { if (e.target.value) setTarget(e.target.value + "/FUZZ"); }}
+              style={{ maxWidth: 160 }}
+            >
+              <option value="">From graph…</option>
+              {hosts.map((h) => <option key={h} value={h}>{h}</option>)}
+            </select>
+          )}
         </div>
+      </div>
 
-        <div className="ops-fuzz-row" style={{display: "flex", gap: 12, alignItems: "center"}}>
-          <span className="ops-fuzz-label">Fuzzer</span>
-          <label style={{display: "flex", alignItems: "center", gap: 4, cursor: "pointer"}}>
-            <input type="radio" name="fuzzer" checked={fuzzer === "ffuf"} onChange={() => setFuzzer("ffuf")} /> ffuf
-          </label>
-          <label style={{display: "flex", alignItems: "center", gap: 4, cursor: "pointer"}}>
-            <input type="radio" name="fuzzer" checked={fuzzer === "feroxbuster"} onChange={() => setFuzzer("feroxbuster")} /> Feroxbuster
-          </label>
-          <div style={{marginLeft: "auto"}}>
-            <WordlistPicker current={wordlist} onSelect={setWordlist} />
-            <span className="ops-mod-wl-current" style={{marginLeft: 6}}>{wordlist ? wordlist.split("/").pop() : "default"}</span>
+      <div className="row">
+        <div className="field">
+          <label>Fuzzer</label>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button type="button" className={`check ${fuzzer === "ffuf" ? "on" : ""}`} onClick={() => setFuzzer("ffuf")}>
+              <span className="check-box" /> ffuf
+            </button>
+            <button type="button" className={`check ${fuzzer === "feroxbuster" ? "on" : ""}`} onClick={() => setFuzzer("feroxbuster")}>
+              <span className="check-box" /> Feroxbuster
+            </button>
           </div>
         </div>
-
-        <div className="ops-fuzz-row" style={{display: "flex", gap: 8, alignItems: "flex-end"}}>
-          <span className="ops-fuzz-label" style={{alignSelf: "center"}}>Filters</span>
-          {filterDefs.map(f => (
-            <label key={f.key} className="ops-filter-field">
-              <span className="ops-filter-label">{f.label} ({f.flag})</span>
-              <input className="ops-filter-input" placeholder={f.ph}
-                value={filters[f.key] || ""}
-                onChange={e => setFilters(prev => ({...prev, [f.key]: e.target.value}))} />
-            </label>
-          ))}
-          <div style={{display: "flex", gap: 6, marginLeft: "auto"}}>
-            <button type="button" className="primary" onClick={() => void runFuzz()} disabled={busy || !target}>
-              {busy ? "Running..." : "Run"}
-            </button>
-            {busy && <button type="button" className="danger" onClick={() => abortRef.current?.abort()}>Stop</button>}
+        <div className="field">
+          <label>Wordlist</label>
+          <div style={{ display: "flex", gap: 6 }}>
+            <input
+              className="input mono"
+              value={wordlist}
+              onChange={(e) => setWordlist(e.target.value)}
+              placeholder="default"
+              style={{ flex: 1 }}
+            />
+            <WordlistPicker current={wordlist} onSelect={setWordlist} />
           </div>
         </div>
       </div>
 
-      <pre className="ops-tty" ref={ttyRef}>
-        {ttyLines.length === 0
-          ? <span className="ops-tty-empty">Configure a target and run a fuzzer to see output here</span>
-          : ttyLines.map((l, i) => <div key={i}>{renderAnsi(l)}</div>)}
-      </pre>
-    </div>
+      <div className="row">
+        <div className="field">
+          <label>Extensions</label>
+          <input
+            className="input mono"
+            value={extensions}
+            onChange={(e) => setExtensions(e.target.value)}
+            placeholder=".bak,.zip,.env"
+          />
+        </div>
+        <div className="field">
+          <label>Threads</label>
+          <input className="input mono" value={threads} onChange={(e) => setThreads(e.target.value)} />
+        </div>
+      </div>
+
+      <div className="row">
+        <div className="field">
+          <label>Match status</label>
+          <input className="input mono" value={matchStatus} onChange={(e) => setMatchStatus(e.target.value)} />
+        </div>
+        <div className="field">
+          <label>Filter size</label>
+          <input className="input mono" value={filterSize} onChange={(e) => setFilterSize(e.target.value)} placeholder="e.g. 0" />
+        </div>
+      </div>
+
+      <div className="actions-row">
+        <button
+          type="button"
+          className="btn primary"
+          onClick={() => void runFuzz()}
+          disabled={busy || !target.trim()}
+        >
+          <Icon.play size={12} /> {busy ? `Running ${fuzzer}…` : `Start ${fuzzer}`}
+        </button>
+        {busy && (
+          <button type="button" className="btn danger" onClick={stopFuzz}>
+            <Icon.stop size={12} /> Stop
+          </button>
+        )}
+      </div>
+    </>
   );
 }
 
-/** Render a TTY line with colors */
-function renderAnsi(line: string) {
-  const clean = line.replace(/\x1b\[[0-9;]*m/g, "");
-  // Our own ANSI markers
-  if (line.includes("\x1b[32m")) return <span style={{color: "#4ade80"}}>{clean}</span>;
-  if (line.includes("\x1b[31m")) return <span style={{color: "#f87171"}}>{clean}</span>;
-  // ffuf match results: highlight status and size
-  if (clean.includes("[Status:")) {
-    const m = clean.match(/^(.+?)\s+\[Status:\s*(\d+),\s*Size:\s*(\d+),.*$/);
-    if (m) {
-      const code = parseInt(m[2]);
-      const color = code < 300 ? "#4ade80" : code < 400 ? "#facc15" : code < 500 ? "#fb923c" : "#f87171";
-      return <><span style={{color: "#67e8f9"}}>{m[1].padEnd(24)}</span> <span style={{color}}>[{m[2]}]</span> <span style={{color: "#94a3b8"}}>{clean.slice(clean.indexOf("Size:"))}</span></>;
-    }
-  }
-  // Progress lines: dim
-  if (clean.startsWith("::") && clean.includes("Progress:")) return <span style={{color: "#475569"}}>{clean}</span>;
-  // Command line
-  if (clean.startsWith("$")) return <span style={{color: "#a78bfa"}}>{clean}</span>;
-  // Banner/config: dim
-  if (clean.startsWith("::") || clean.startsWith("/") || clean.startsWith("\\") || clean.startsWith("_")) return <span style={{color: "#334155"}}>{clean}</span>;
-  return <>{clean}</>;
-}
-
-
-/* ═══════════════════════════════════════════════════════════════════
-   Scan Tab — scanner selection, run against graph endpoints
-   ═══════════════════════════════════════════════════════════════════ */
-function ScanTab() {
+/* ========================================================================
+   Scan tab
+   ======================================================================== */
+function ScanTab({ appendLog, updateRun }: TabProps) {
+  const [plugins, setPlugins] = useState<Plugin[]>([]);
   const [enabledWeb, setEnabledWeb] = useState<Set<string>>(new Set(["nuclei"]));
   const [enabledLocal, setEnabledLocal] = useState<Set<string>>(new Set());
-  const [localTarget, setLocalTarget] = useState(".");
+  const [templates, setTemplates] = useState("");
+  const [severityIdx, setSeverityIdx] = useState(2);
   const [hosts, setHosts] = useState<string[]>([]);
-  const [webTarget, setWebTarget] = useState("");
+  const [target, setTarget] = useState("");
+  const [presets, setPresets] = useState<ScanPreset[]>([]);
+  const [preset, setPreset] = useState("");
   const [busy, setBusy] = useState(false);
-  const [logs, setLogs] = useState<LogEntry[]>([]);
-  const logEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  const log = useCallback((phase: string, msg: string, level: LogEntry["level"] = "info") => {
-    setLogs(prev => [...prev, { ts: ts(), phase, msg, level }]);
-    setTimeout(() => logEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+  useEffect(() => {
+    apiJson<Plugin[]>("/api/plugins")
+      .then((ps) => {
+        const scannerPlugins = ps.filter((p) => p.type === "scanner" || p.type === "web" || p.type === "local" || ["nuclei", "trivy", "gitleaks", "semgrep", "grype"].includes(p.id));
+        setPlugins(scannerPlugins.length ? scannerPlugins : FALLBACK_SCANNERS);
+      })
+      .catch(() => setPlugins(FALLBACK_SCANNERS));
+    apiJson<{ hosts: string[] }>("/api/graph/hosts")
+      .then((d) => setHosts(d.hosts || []))
+      .catch(() => {});
+    apiJson<ScanPreset[]>("/api/scan-presets")
+      .then((ps) => setPresets(Array.isArray(ps) ? ps : []))
+      .catch(() => {});
   }, []);
 
-  useEffect(() => {
-    apiJson<{hosts: string[]}>("/api/graph/hosts").then(d => setHosts(d.hosts)).catch(() => {});
-  }, []);
+  const webScanners = useMemo(
+    () => plugins.filter((p) => p.id === "nuclei" || p.type === "web"),
+    [plugins],
+  );
+  const localScanners = useMemo(
+    () => plugins.filter((p) => p.id !== "nuclei" && p.type !== "web"),
+    [plugins],
+  );
 
   function toggle(set: Set<string>, setFn: (s: Set<string>) => void, id: string) {
-    const n = new Set(set); if (n.has(id)) n.delete(id); else n.add(id); setFn(n);
+    const n = new Set(set);
+    if (n.has(id)) n.delete(id);
+    else n.add(id);
+    setFn(n);
   }
 
-  /** Helper to read SSE events from pipeline endpoint */
-  async function streamPipelineScan(reqBody: Record<string, unknown>) {
-    const ac = new AbortController(); abortRef.current = ac;
-    try {
-      const r = await apiFetch("/api/ingest/crawl/stream", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(reqBody), signal: ac.signal,
-      });
-      if (!r.ok) throw new Error(await r.text() || r.statusText);
-      const reader = r.body?.getReader(); if (!reader) throw new Error("No body");
-      const decoder = new TextDecoder(); let buf = "";
-      while (true) {
-        const { done, value } = await reader.read(); if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const parts = buf.split("\n\n"); buf = parts.pop() || "";
-        for (const part of parts) {
-          const line = part.replace(/^data: /, "").trim(); if (!line) continue;
-          try {
-            const evt = JSON.parse(line) as any;
-            if (evt.type === "crawl_complete") { /* skip */ }
-            else if (evt.type === "phase_start") log("scan", `Starting scan (${evt.targets} targets)`);
-            else if (evt.type === "phase_complete") log("scan", "Scan phase complete", "success");
-            else if (evt.type === "scan_progress") {
-              if (evt.phase === "error") log("scan", `✗ ${evt.scanner}: ${evt.detail}`, "error");
-              else if (evt.phase === "info") log("scan", `ℹ ${evt.detail}`, "warn");
-              else if (evt.phase === "complete" && evt.ingested) log("scan", `✓ ${evt.scanner}: ${evt.ingested.nodes} nodes, ${evt.ingested.edges} edges`, "success");
-              else if (evt.phase === "complete") log("scan", `✓ ${evt.scanner}: done`, "info");
-              else if (evt.phase === "starting" && evt.detail) log("scan", `▸ ${evt.scanner}: ${evt.detail}`, "info");
-              else log("scan", `▸ ${evt.scanner}: ${evt.detail || evt.phase}`, "info");
-            } else if (evt.type === "complete") log("scan", "Scan complete", "success");
-            else if (evt.type === "error") log("scan", `Error: ${evt.detail}`, "error");
-          } catch { /* skip */ }
-        }
+  function applyPreset(name: string) {
+    setPreset(name);
+    const p = presets.find((x) => x.name === name);
+    if (!p) return;
+    const summary = (p.scanner_summary || "").toLowerCase();
+    const webIds = new Set<string>();
+    const localIds = new Set<string>();
+    for (const plugin of plugins) {
+      if (summary.includes(plugin.id)) {
+        if (plugin.id === "nuclei" || plugin.type === "web") webIds.add(plugin.id);
+        else localIds.add(plugin.id);
       }
-    } catch (err) {
-      if ((err as Error).name !== "AbortError") log("scan", String(err), "error");
-    } finally { abortRef.current = null; }
+    }
+    if (webIds.size) setEnabledWeb(webIds);
+    if (localIds.size) setEnabledLocal(localIds);
   }
 
   async function runWebScan() {
     if (enabledWeb.size === 0) return;
     setBusy(true);
-    log("scan", `Starting web scan: ${WEB_SCANNERS.filter(m => enabledWeb.has(m.id)).map(m => m.label).join(", ")}`);
-    await streamPipelineScan({
-      seeds_file: "", source_label: "scan", crawl_mode: "crawl_only", skip_crawl: true,
-      modules: WEB_SCANNERS.map(m => ({ id: m.id, enabled: enabledWeb.has(m.id), wordlist: null, extra_args: [] })),
+    const label = Array.from(enabledWeb).join(",");
+    appendLog("scan", "scan", `Starting web scan: ${label}`);
+    updateRun("scan", {
+      title: `Scan · ${label}`,
+      status: "running",
+      visited: 0,
+      total: 0,
+      pct: 0,
+      meta: [[0, " scanned"]],
     });
-    setBusy(false);
+
+    const severity = SEVERITIES.slice(severityIdx).join(",");
+    const extraArgs = templates.trim()
+      ? ["-t", templates.trim(), "-severity", severity]
+      : ["-severity", severity];
+
+    const body: Record<string, unknown> = {
+      seeds_file: "",
+      source_label: "scan",
+      crawl_mode: "crawl_only",
+      skip_crawl: true,
+      modules: webScanners.map((m) => ({
+        id: m.id,
+        enabled: enabledWeb.has(m.id),
+        wordlist: null,
+        extra_args: enabledWeb.has(m.id) && m.id === "nuclei" ? extraArgs : [],
+      })),
+    };
+
+    const ac = new AbortController();
+    abortRef.current = ac;
+    try {
+      const r = await apiFetch("/api/ingest/crawl/stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: ac.signal,
+      });
+      if (!r.ok) throw new Error((await r.text()) || r.statusText);
+      let scannedCount = 0;
+      await readSse(r, (evt) => {
+        const t = evt.type as string | undefined;
+        if (t === "phase_start") appendLog("scan", "scan", `Scanning ${evt.targets ?? 0} targets`);
+        else if (t === "scan_progress") {
+          const scanner = String(evt.scanner ?? "");
+          const phase = String(evt.phase ?? "");
+          const detail = String(evt.detail ?? "");
+          if (phase === "error") appendLog("scan", scanner, detail, "error");
+          else if (phase === "complete") {
+            scannedCount += 1;
+            const ing = (evt.ingested ?? {}) as { nodes?: number; edges?: number };
+            appendLog("scan", scanner, ing.nodes != null ? `${ing.nodes} nodes, ${ing.edges ?? 0} edges` : "done", "success");
+            updateRun("scan", { meta: [[scannedCount, " scanned"]] });
+          } else if (phase === "info") appendLog("scan", scanner, detail, "warn");
+          else if (detail) appendLog("scan", scanner, detail);
+        } else if (t === "phase_complete") {
+          appendLog("scan", "scan", "Scan phase complete", "success");
+          updateRun("scan", { status: "done", pct: 100 });
+        } else if (t === "complete") {
+          appendLog("scan", "scan", "Scan complete", "success");
+          updateRun("scan", { status: "done", pct: 100 });
+        } else if (t === "error") {
+          appendLog("scan", "scan", `Error: ${evt.detail}`, "error");
+          updateRun("scan", { status: "error" });
+        }
+      }, ac.signal);
+    } catch (err) {
+      if ((err as Error).name !== "AbortError") {
+        appendLog("scan", "scan", String(err), "error");
+        updateRun("scan", { status: "error" });
+      }
+    } finally {
+      setBusy(false);
+      abortRef.current = null;
+    }
   }
 
-  /** Fetch web content and scan it locally */
   async function runFetchAndScan() {
-    const target = webTarget || (hosts.length > 0 ? hosts[0] : "");
-    if (!target || enabledLocal.size === 0) return;
+    const t = target || hosts[0] || "";
+    if (!t || enabledLocal.size === 0) return;
     setBusy(true);
-    const ids = LOCAL_SCANNERS.filter(m => enabledLocal.has(m.id)).map(m => m.id);
-    log("fetch", `Downloading content from ${target}...`);
+    const ids = Array.from(enabledLocal);
+    appendLog("scan", "fetch", `Downloading content from ${t}...`);
+    updateRun("scan", {
+      title: `Scan · ${ids.join(",")}`,
+      status: "running",
+      visited: 0,
+      total: 0,
+      pct: 0,
+      meta: [[0, " files"]],
+    });
 
-    const ac = new AbortController(); abortRef.current = ac;
+    const ac = new AbortController();
+    abortRef.current = ac;
     try {
       const r = await apiFetch("/api/scan/fetch-and-scan", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ base_url: target, scanner_ids: ids }), signal: ac.signal,
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ base_url: t, scanner_ids: ids }),
+        signal: ac.signal,
       });
-      if (!r.ok) throw new Error(await r.text() || r.statusText);
-      const reader = r.body?.getReader(); if (!reader) throw new Error("No body");
-      const decoder = new TextDecoder(); let buf = "";
-      while (true) {
-        const { done, value } = await reader.read(); if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const parts = buf.split("\n\n"); buf = parts.pop() || "";
-        for (const part of parts) {
-          const line = part.replace(/^data: /, "").trim(); if (!line) continue;
-          try {
-            const evt = JSON.parse(line) as any;
-            if (evt.type === "status") log("fetch", evt.detail);
-            else if (evt.type === "scanner_start") log("scan", `▸ ${evt.scanner}: starting...`);
-            else if (evt.type === "scanner_progress") {
-              if (evt.output) log("scan", `  ${evt.scanner}: ${evt.output}`);
-            }
-            else if (evt.type === "scanner_done") {
-              if (evt.ingested) log("scan", `✓ ${evt.scanner}: ${evt.ingested.nodes} nodes, ${evt.ingested.edges} edges`, "success");
-              else if (evt.error) log("scan", `✗ ${evt.scanner}: ${evt.error}`, "error");
-              else log("scan", `✓ ${evt.scanner}: done (exit ${evt.exit_code ?? "?"})`, "info");
-            }
-            else if (evt.type === "complete") {
-              if (evt.ok) log("fetch", `Scan complete (${evt.files} files scanned)`, "success");
-              else log("fetch", `Failed: ${evt.error}`, "error");
-            }
-            else if (evt.type === "error") log("scan", `Error: ${evt.detail}`, "error");
-          } catch { /* skip */ }
+      if (!r.ok) throw new Error((await r.text()) || r.statusText);
+      await readSse(r, (evt) => {
+        const tt = evt.type as string | undefined;
+        if (tt === "status") appendLog("scan", "fetch", String(evt.detail ?? ""));
+        else if (tt === "scanner_start") appendLog("scan", String(evt.scanner ?? "scan"), "starting...");
+        else if (tt === "scanner_progress") {
+          if (evt.output) appendLog("scan", String(evt.scanner ?? "scan"), String(evt.output));
+        } else if (tt === "scanner_done") {
+          const scanner = String(evt.scanner ?? "scan");
+          if (evt.ingested) {
+            const ing = evt.ingested as { nodes?: number; edges?: number };
+            appendLog("scan", scanner, `✓ ${ing.nodes ?? 0} nodes, ${ing.edges ?? 0} edges`, "success");
+          } else if (evt.error) appendLog("scan", scanner, `✗ ${evt.error}`, "error");
+          else appendLog("scan", scanner, `done (exit ${evt.exit_code ?? "?"})`, "success");
+        } else if (tt === "complete") {
+          if (evt.ok) {
+            appendLog("scan", "fetch", `Scan complete (${evt.files ?? "?"} files scanned)`, "success");
+            updateRun("scan", { status: "done", pct: 100, meta: [[Number(evt.files ?? 0), " files"]] });
+          } else {
+            appendLog("scan", "fetch", `Failed: ${evt.error}`, "error");
+            updateRun("scan", { status: "error" });
+          }
+        } else if (tt === "error") {
+          appendLog("scan", "scan", `Error: ${evt.detail}`, "error");
+          updateRun("scan", { status: "error" });
         }
-      }
+      }, ac.signal);
     } catch (err) {
-      if ((err as Error).name !== "AbortError") log("scan", String(err), "error");
-    } finally { setBusy(false); abortRef.current = null; }
+      if ((err as Error).name !== "AbortError") {
+        appendLog("scan", "scan", String(err), "error");
+        updateRun("scan", { status: "error" });
+      }
+    } finally {
+      setBusy(false);
+      abortRef.current = null;
+    }
   }
 
-  /** Run local scanners against a local filesystem path */
-  async function runLocalScan() {
-    if (enabledLocal.size === 0 || !localTarget) return;
-    setBusy(true);
-    log("scan", `Scanning local path: ${localTarget}`);
-    for (const m of LOCAL_SCANNERS) {
-      if (!enabledLocal.has(m.id)) continue;
-      log("scan", `▸ ${m.label}: starting...`);
-      try {
-        const r = await apiFetch("/api/tools/run", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ tool_id: m.id, targets: [localTarget], extra_args: [] }),
-        });
-        if (!r.ok) throw new Error(await r.text() || r.statusText);
-        const reader = r.body?.getReader(); if (!reader) continue;
-        const decoder = new TextDecoder(); let buf = "";
-        while (true) {
-          const { done, value } = await reader.read(); if (done) break;
-          buf += decoder.decode(value, { stream: true });
-          const parts = buf.split("\n\n"); buf = parts.pop() || "";
-          for (const part of parts) {
-            const line = part.replace(/^data: /, "").trim(); if (!line) continue;
-            try {
-              const evt = JSON.parse(line) as any;
-              if (evt.type === "complete") {
-                if (evt.ingested) log("scan", `✓ ${m.label}: ${evt.ingested.nodes} nodes, ${evt.ingested.edges} edges`, "success");
-                else if (evt.error) log("scan", `✗ ${m.label}: ${evt.error}`, "error");
-                else log("scan", `✓ ${m.label}: done (exit ${evt.exit_code ?? "?"})`, "info");
-              } else if (evt.type === "error") log("scan", `✗ ${m.label}: ${evt.detail}`, "error");
-            } catch { /* skip */ }
-          }
-        }
-      } catch (err) { log("scan", `✗ ${m.label}: ${err}`, "error"); }
-    }
-    setBusy(false);
+  function stopScan() {
+    abortRef.current?.abort();
+    updateRun("scan", { status: "paused" });
+    appendLog("scan", "scan", "Stopped", "warn");
   }
+
+  const hostCount = hosts.length;
 
   return (
-    <div className="ops-crawl-layout">
-      <div className="ops-config">
-        <div className="ops-section ops-section-open">
-          <div className="ops-section-head">Web Scanners</div>
-          <p style={{fontSize: "0.78rem", color: "var(--c-text-muted,#888)", margin: "4px 0 8px"}}>
-            Scan URLs from the graph (crawl/fuzz results).
-          </p>
-          {WEB_SCANNERS.map(m => (
-            <label key={m.id} className="ops-mod-item" style={{display: "flex", gap: 6, padding: "4px 0"}}>
-              <input type="checkbox" checked={enabledWeb.has(m.id)} onChange={() => toggle(enabledWeb, setEnabledWeb, m.id)} />
-              <span className="ops-mod-name">{m.label}</span>
-              <span className="ops-mod-desc">{m.desc}</span>
-            </label>
-          ))}
-          <div className="ops-pipeline-actions" style={{marginTop: 8}}>
-            <button type="button" className="primary" onClick={() => void runWebScan()} disabled={busy || enabledWeb.size === 0}>
-              {busy ? "Scanning..." : "Run Web Scan"}
-            </button>
-            {busy && <button type="button" className="danger" onClick={() => abortRef.current?.abort()}>Cancel</button>}
-          </div>
-        </div>
-
-        <div className="ops-section ops-section-open">
-          <div className="ops-section-head">Code &amp; Dependency Scanners</div>
-          <p style={{fontSize: "0.78rem", color: "var(--c-text-muted,#888)", margin: "4px 0 8px"}}>
-            Download discovered web content and scan for secrets, vulnerabilities, and code issues.
-          </p>
-          {LOCAL_SCANNERS.map(m => (
-            <label key={m.id} className="ops-mod-item" style={{display: "flex", gap: 6, padding: "4px 0"}}>
-              <input type="checkbox" checked={enabledLocal.has(m.id)} onChange={() => toggle(enabledLocal, setEnabledLocal, m.id)} />
-              <span className="ops-mod-name">{m.label}</span>
-              <span className="ops-mod-desc">{m.desc}</span>
-            </label>
-          ))}
-          <div style={{marginTop: 8, fontSize: "0.78rem", fontWeight: 600, color: "var(--c-text-muted,#888)"}}>Target</div>
-          <div style={{display: "flex", gap: 6, marginTop: 4}}>
-            <div style={{display: "flex", gap: 4, flex: 1}}>
-              <input value={webTarget} onChange={e => setWebTarget(e.target.value)}
-                placeholder="http://target or /local/path" style={{flex: 1}} />
-              {hosts.length > 0 && (
-                <select value="" onChange={e => { if (e.target.value) setWebTarget(e.target.value); }} style={{maxWidth: 140}}>
-                  <option value="">From graph...</option>
-                  {hosts.map(h => <option key={h} value={h}>{h}</option>)}
-                </select>
-              )}
-            </div>
-          </div>
-          <div className="ops-pipeline-actions" style={{marginTop: 8}}>
-            {(webTarget.startsWith("http://") || webTarget.startsWith("https://")) ? (
-              <button type="button" className="primary" onClick={() => void runFetchAndScan()} disabled={busy || enabledLocal.size === 0 || !webTarget}>
-                {busy ? "Fetching & Scanning..." : "Fetch & Scan"}
+    <>
+      <div className="field">
+        <label>Scanners</label>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {[...webScanners, ...localScanners].map((s) => {
+            const isWeb = s.id === "nuclei" || s.type === "web";
+            const on = (isWeb ? enabledWeb : enabledLocal).has(s.id);
+            return (
+              <button
+                key={s.id}
+                type="button"
+                className={`check ${on ? "on" : ""}`}
+                onClick={() => toggle(isWeb ? enabledWeb : enabledLocal, isWeb ? setEnabledWeb : setEnabledLocal, s.id)}
+                title={s.installed === false ? "Not installed" : undefined}
+              >
+                <span className="check-box" /> {s.name}
+                <span style={{ color: "var(--fg-3)", marginLeft: 4, fontSize: 11 }}>{s.description}</span>
               </button>
-            ) : (
-              <button type="button" className="primary" onClick={() => { setLocalTarget(webTarget || "."); void runLocalScan(); }}
-                disabled={busy || enabledLocal.size === 0 || !webTarget}>
-                {busy ? "Scanning..." : "Scan Local Path"}
-              </button>
-            )}
-            {busy && <button type="button" className="danger" onClick={() => abortRef.current?.abort()}>Cancel</button>}
-          </div>
+            );
+          })}
         </div>
       </div>
 
-      <div className="ops-log">
-        <div className="ops-log-header"><span>Scan Log</span><button type="button" className="ghost" onClick={() => setLogs([])}>Clear</button></div>
-        <div className="ops-log-body">
-          {logs.length === 0 && <div className="ops-log-empty">Run scanners to see results here</div>}
-          {logs.map((l, i) => (
-            <div key={i} className={`ops-log-entry ops-log-${l.level}`}>
-              <span className="ops-log-ts">{l.ts}</span><span className="ops-log-phase">{l.phase}</span><span className="ops-log-msg">{l.msg}</span>
-            </div>
+      {presets.length > 0 && (
+        <div className="field">
+          <label>Preset</label>
+          <select
+            className="input mono"
+            value={preset}
+            onChange={(e) => applyPreset(e.target.value)}
+          >
+            <option value="">— custom —</option>
+            {presets.map((p) => (
+              <option key={p.name} value={p.name}>{p.name} — {p.description}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      <div className="field">
+        <label>Templates (Nuclei)</label>
+        <input
+          className="input mono"
+          value={templates}
+          onChange={(e) => setTemplates(e.target.value)}
+          placeholder="exposures/, vulnerabilities/, misconfig/"
+        />
+        <span className="hint">Limit Nuclei to specific template categories.</span>
+      </div>
+
+      <div className="field">
+        <label>Severity threshold</label>
+        <div className="chip-row">
+          {SEVERITIES.map((s, i) => (
+            <button
+              key={s}
+              type="button"
+              className={`chip ${i >= severityIdx ? "on" : ""}`}
+              onClick={() => setSeverityIdx(i)}
+            >{s}</button>
           ))}
-          <div ref={logEndRef} />
         </div>
       </div>
-    </div>
+
+      <div className="field">
+        <label>Target (for local scanners)</label>
+        <div style={{ display: "flex", gap: 6 }}>
+          <input
+            className="input mono"
+            value={target}
+            onChange={(e) => setTarget(e.target.value)}
+            placeholder="http://target (fetch & scan) or /local/path"
+            style={{ flex: 1 }}
+          />
+          {hosts.length > 0 && (
+            <select
+              className="input mono"
+              value=""
+              onChange={(e) => { if (e.target.value) setTarget(e.target.value); }}
+              style={{ maxWidth: 160 }}
+            >
+              <option value="">From graph…</option>
+              {hosts.map((h) => <option key={h} value={h}>{h}</option>)}
+            </select>
+          )}
+        </div>
+      </div>
+
+      <div className="actions-row">
+        <button
+          type="button"
+          className="btn primary"
+          onClick={() => void runWebScan()}
+          disabled={busy || enabledWeb.size === 0}
+        >
+          <Icon.scan size={12} /> {busy ? "Scanning…" : `Run web scan${hostCount ? ` on ${hostCount} hosts` : ""}`}
+        </button>
+        {(target.startsWith("http://") || target.startsWith("https://")) && enabledLocal.size > 0 && (
+          <button
+            type="button"
+            className="btn primary"
+            onClick={() => void runFetchAndScan()}
+            disabled={busy}
+          >
+            <Icon.scan size={12} /> Fetch & scan
+          </button>
+        )}
+        {busy && (
+          <button type="button" className="btn danger" onClick={stopScan}>
+            <Icon.stop size={12} /> Stop
+          </button>
+        )}
+      </div>
+    </>
   );
 }
 
+/* ========================================================================
+   Import tab
+   ======================================================================== */
+function ImportTab({ appendLog, updateRun }: TabProps) {
+  const [ingestorNames, setIngestorNames] = useState<string[]>([]);
+  const [hint, setHint] = useState("");
+  const [sourceLabel, setSourceLabel] = useState(`import-${new Date().toISOString().slice(0, 10)}`);
+  const [file, setFile] = useState<File | null>(null);
+  const [drag, setDrag] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-/* ═══════════════════════════════════════════════════════════════════
-   Shared: WordlistPicker modal
-   ═══════════════════════════════════════════════════════════════════ */
+  useEffect(() => {
+    apiJson<{ name: string }[]>("/api/ingestors")
+      .then((r) => setIngestorNames(r.map((x) => x.name)))
+      .catch(() => {});
+  }, []);
+
+  function onDrop(e: DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    setDrag(false);
+    const f = e.dataTransfer.files?.[0];
+    if (f) setFile(f);
+  }
+  function onPick(e: ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (f) setFile(f);
+  }
+
+  async function onSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!file) return;
+    setBusy(true);
+    appendLog("import", "ingest", `Uploading ${file.name}…`);
+    updateRun("import", {
+      title: `Import · ${file.name}`,
+      status: "running",
+      visited: 0,
+      total: 1,
+      pct: 10,
+      meta: [[file.name, ""]],
+    });
+    const fd = new FormData();
+    fd.append("file", file);
+    const q = new URLSearchParams({ source_label: sourceLabel });
+    if (hint) q.set("ingestor_hint", hint);
+    try {
+      const r = await apiFetch(`/api/ingest?${q}`, { method: "POST", body: fd });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.detail || JSON.stringify(j));
+      appendLog("import", "ingest", `Ingested: ${j.nodes} nodes, ${j.edges} edges`, "success");
+      updateRun("import", {
+        status: "done",
+        pct: 100,
+        meta: [[j.nodes, " nodes"], [j.edges, " edges"]],
+      });
+      setFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    } catch (err) {
+      appendLog("import", "ingest", String(err), "error");
+      updateRun("import", { status: "error" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form onSubmit={onSubmit}>
+      <datalist id="ops-ingestor-hints">
+        {ingestorNames.map((n) => <option key={n} value={n} />)}
+      </datalist>
+
+      <div className="field">
+        <label>Ingestor</label>
+        <input
+          className="input mono"
+          value={hint}
+          onChange={(e) => setHint(e.target.value)}
+          list="ops-ingestor-hints"
+          placeholder="auto"
+        />
+        <span className="hint">Autodetect: {ingestorNames.slice(0, 8).join(" · ") || "burp-xml · zap-json · httpx · ffuf"}</span>
+      </div>
+
+      <div className="field">
+        <label>Upload</label>
+        <div
+          className={`ops-dropzone ${drag ? "drag" : ""}`}
+          onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
+          onDragLeave={() => setDrag(false)}
+          onDrop={onDrop}
+          onClick={() => fileInputRef.current?.click()}
+        >
+          <Icon.upload size={32} />
+          <div className="drop-main">
+            {file ? file.name : "Drop Burp / ZAP / httpx export here"}
+          </div>
+          <div className="drop-sub">
+            {file
+              ? <>size: {(file.size / 1024).toFixed(1)} KB · <span className="pick">change…</span></>
+              : <>or <span className="pick">browse files</span></>}
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            style={{ display: "none" }}
+            onChange={onPick}
+          />
+        </div>
+      </div>
+
+      <div className="field">
+        <label>Source label</label>
+        <input
+          className="input mono"
+          value={sourceLabel}
+          onChange={(e) => setSourceLabel(e.target.value)}
+        />
+      </div>
+
+      <div className="actions-row">
+        <button
+          type="submit"
+          className="btn primary"
+          disabled={busy || !file}
+        >
+          <Icon.upload size={12} /> {busy ? "Uploading…" : "Import"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/* ========================================================================
+   Wordlist picker (modal)
+   ======================================================================== */
 function WordlistPicker({ current, onSelect }: { current: string; onSelect: (path: string) => void }) {
   const [open, setOpen] = useState(false);
   const [wordlists, setWordlists] = useState<Wordlist[]>([]);
@@ -674,37 +1403,64 @@ function WordlistPicker({ current, onSelect }: { current: string; onSelect: (pat
     if (category) params.set("category", category);
     if (search) params.set("search", search);
     params.set("limit", "100");
-    apiJson<{wordlists: Wordlist[]}>(`/api/wordlists?${params}`)
-      .then(d => setWordlists(d.wordlists)).catch(() => setWordlists([]));
+    apiJson<{ wordlists: Wordlist[] }>(`/api/wordlists?${params}`)
+      .then((d) => setWordlists(d.wordlists || []))
+      .catch(() => setWordlists([]));
   }, [open, search, category]);
 
-  const categories = [...new Set(wordlists.map(w => w.category))].sort();
+  const categories = useMemo(
+    () => [...new Set(wordlists.map((w) => w.category))].sort(),
+    [wordlists],
+  );
 
   return (
     <>
-      <button type="button" className="ghost ops-wl-change-btn" onClick={() => setOpen(true)}>Change wordlist</button>
+      <button type="button" className="btn" onClick={() => setOpen(true)}>Pick…</button>
       {open && (
-        <div className="wl-picker-overlay" onClick={() => setOpen(false)}>
-          <div className="wl-picker" onClick={e => e.stopPropagation()}>
-            <div className="wl-picker-header"><h3>Select Wordlist</h3><button type="button" className="ghost" onClick={() => setOpen(false)}>✕</button></div>
-            <div className="wl-picker-filters">
-              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search wordlists..." autoFocus className="wl-picker-search" />
-              <select value={category} onChange={e => setCategory(e.target.value)} className="wl-picker-cat">
+        <div className="ops-wl-picker-overlay" onClick={() => setOpen(false)}>
+          <div className="ops-wl-picker" onClick={(e) => e.stopPropagation()}>
+            <div className="ops-wl-picker-header">
+              <h3>Select Wordlist</h3>
+              <button type="button" className="btn ghost" onClick={() => setOpen(false)}>
+                <Icon.close size={12} />
+              </button>
+            </div>
+            <div className="ops-wl-picker-filters">
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search wordlists…"
+                autoFocus
+                className="ops-wl-picker-search"
+              />
+              <select
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                className="ops-wl-picker-cat"
+              >
                 <option value="">All categories</option>
-                {categories.map(c => <option key={c} value={c}>{c}</option>)}
+                {categories.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
-            <div className="wl-picker-list">
-              {wordlists.map(w => (
-                <button key={w.path} type="button"
-                  className={`wl-picker-item ${w.path === current ? "wl-picker-active" : ""}`}
-                  onClick={() => { onSelect(w.path); setOpen(false); }}>
-                  <span className="wl-picker-name">{w.name}</span>
-                  <span className="wl-picker-meta"><span className="badge">{w.category}</span><span>{w.lines.toLocaleString()} lines</span></span>
-                  <span className="wl-picker-path">{w.relative}</span>
+            <div className="ops-wl-picker-list">
+              {wordlists.map((w) => (
+                <button
+                  key={w.path}
+                  type="button"
+                  className={`ops-wl-picker-item ${w.path === current ? "active" : ""}`}
+                  onClick={() => { onSelect(w.path); setOpen(false); }}
+                >
+                  <span className="wl-name">{w.name}</span>
+                  <span className="wl-meta">
+                    <span className="wl-cat-badge">{w.category}</span>
+                    <span>{w.lines.toLocaleString()} lines</span>
+                  </span>
+                  <span className="wl-path">{w.relative}</span>
                 </button>
               ))}
-              {wordlists.length === 0 && <div className="wl-picker-empty">No wordlists found.</div>}
+              {wordlists.length === 0 && (
+                <div className="ops-wl-picker-empty">No wordlists found.</div>
+              )}
             </div>
           </div>
         </div>
