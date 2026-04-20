@@ -1,0 +1,112 @@
+/* Gossamer — design tokens */
+:root {
+  /* Accent hue (tweakable) */
+  --accent-hue: 210;
+
+  /* Base surface — cool deep blue-black */
+  --bg-0: oklch(12% 0.01 250);           /* page */
+  --bg-1: oklch(15% 0.012 250);          /* chrome */
+  --bg-2: oklch(18% 0.013 250);          /* cards */
+  --bg-3: oklch(22% 0.015 250);          /* hover */
+  --bg-4: oklch(28% 0.018 250);          /* active */
+
+  /* Text */
+  --fg-0: oklch(96% 0.01 250);           /* primary */
+  --fg-1: oklch(78% 0.01 250);           /* secondary */
+  --fg-2: oklch(58% 0.015 250);          /* tertiary */
+  --fg-3: oklch(42% 0.015 250);          /* quaternary */
+  --fg-4: oklch(30% 0.012 250);          /* ghost */
+
+  /* Borders */
+  --line-0: oklch(22% 0.01 250);
+  --line-1: oklch(28% 0.015 250);
+  --line-2: oklch(36% 0.018 250);
+
+  /* Gossamer silk accent — pale cool */
+  --silk: oklch(88% 0.04 var(--accent-hue));
+  --silk-dim: oklch(72% 0.05 var(--accent-hue));
+  --silk-low: oklch(52% 0.06 var(--accent-hue));
+  --silk-glow: oklch(88% 0.04 var(--accent-hue) / 0.2);
+  --silk-faint: oklch(88% 0.04 var(--accent-hue) / 0.08);
+  --silk-thread: oklch(88% 0.04 var(--accent-hue) / 0.12);
+
+  /* Severity (shared chroma, varying hue) */
+  --sev-crit: oklch(65% 0.2 25);
+  --sev-high: oklch(72% 0.18 35);
+  --sev-med:  oklch(78% 0.16 80);
+  --sev-low:  oklch(78% 0.14 160);
+  --sev-info: oklch(75% 0.12 230);
+
+  /* Node kinds (harmonized) */
+  --kind-host:      oklch(78% 0.14 160);
+  --kind-endpoint:  oklch(80% 0.10 220);
+  --kind-source:    oklch(78% 0.14 300);
+  --kind-form:      oklch(80% 0.13 80);
+  --kind-finding:   oklch(70% 0.18 25);
+  --kind-param:     oklch(78% 0.12 180);
+  --kind-tech:      oklch(78% 0.14 260);
+
+  /* Status */
+  --ok: oklch(75% 0.13 155);
+  --warn: oklch(80% 0.15 75);
+  --err: oklch(70% 0.18 25);
+
+  /* Type */
+  --ff-sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --ff-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --ff-serif: 'IBM Plex Serif', Georgia, serif;
+
+  /* Scale (comfortable by default) */
+  --fs-micro: 10px;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-base: 13px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
+  --fs-xl: 20px;
+  --fs-2xl: 28px;
+  --fs-3xl: 40px;
+
+  /* Spacing */
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px;
+  --sp-5: 20px; --sp-6: 24px; --sp-8: 32px; --sp-10: 40px; --sp-12: 48px;
+
+  /* Radii */
+  --r-xs: 3px; --r-sm: 5px; --r-md: 7px; --r-lg: 10px; --r-xl: 14px;
+
+  /* Shadows */
+  --sh-sm: 0 1px 2px oklch(0% 0 0 / 0.4);
+  --sh-md: 0 4px 16px oklch(0% 0 0 / 0.35);
+  --sh-lg: 0 12px 48px oklch(0% 0 0 / 0.5);
+  --sh-inset: inset 0 1px 0 oklch(100% 0 0 / 0.03);
+  --sh-glow: 0 0 24px var(--silk-glow);
+
+  /* Motion */
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --t-fast: 120ms var(--ease);
+  --t-med: 200ms var(--ease);
+  --t-slow: 400ms var(--ease);
+
+  /* Chrome dims */
+  --rail-w: 56px;
+  --sidebar-w: 232px;
+  --header-h: 44px;
+}
+
+/* Compact density */
+[data-density="compact"] {
+  --sp-1: 3px; --sp-2: 6px; --sp-3: 9px; --sp-4: 12px;
+  --sp-5: 15px; --sp-6: 18px; --sp-8: 24px;
+  --fs-base: 12px;
+  --fs-md: 13px;
+  --header-h: 38px;
+}
+
+/* Roomy density */
+[data-density="roomy"] {
+  --sp-1: 5px; --sp-2: 10px; --sp-3: 14px; --sp-4: 20px;
+  --sp-5: 24px; --sp-6: 30px; --sp-8: 40px;
+  --fs-base: 14px;
+  --fs-md: 15px;
+  --header-h: 52px;
+}
